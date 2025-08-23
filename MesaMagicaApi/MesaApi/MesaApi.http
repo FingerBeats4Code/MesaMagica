@@ -1,0 +1,6 @@
+@MesaApi_HostAddress = http://localhost:5204
+
+GET {{MesaApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

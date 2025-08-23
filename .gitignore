@@ -1,0 +1,37 @@
+# .NET Core
+/MesaMagicaApi/MesaApi/bin/
+/MesaMagicaApi/MesaApi/obj/
+/MesaMagicaApi/MesaApi/.vs/
+*.csproj.user
+*.sln.user
+*.suo
+*.cache
+*.log
+*.sqlite
+*.db
+
+# React/Node.js
+/mesamagicafrontend/node_modules/
+/mesamagicafrontend/build/
+/mesamagicafrontend/.env
+/mesamagicafrontend/.env.local
+/mesamagicafrontend/.env.development.local
+/mesamagicafrontend/.env.test.local
+/mesamagicafrontend/.env.production.local
+npm-debug.log*
+yarn-error.log*
+
+# Docker (remove these if you want to commit Docker files)
+*.dockerignore
+/docker-compose.yml
+/docker-compose.*.yml
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS-specific
+.DS_Store
+Thumbs.db
