@@ -26,12 +26,6 @@ namespace MesaApi.Migrations.Catalog
                 {
                     table.PrimaryKey("PK_Tenants", x => x.TenantId);
                 });
-
-            migrationBuilder.CreateIndex(
-                name: "IX_Tenants_Slug",
-                table: "Tenants",
-                column: "Slug",
-                unique: true);
         }
 
         /// <inheritdoc />

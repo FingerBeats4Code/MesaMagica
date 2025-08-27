@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace MesaApi.Migrations.Catalog
 {
     [DbContext(typeof(CatalogDbContext))]
-    [Migration("20250825212001_InitialCatalog")]
+    [Migration("20250827212554_InitialCatalog")]
     partial class InitialCatalog
     {
         /// <inheritdoc />
@@ -25,7 +25,7 @@ namespace MesaApi.Migrations.Catalog
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
-            modelBuilder.Entity("MesaApi.Model.Catalog.CatalogTenant", b =>
+            modelBuilder.Entity("MesaApi.Model.Catalog.Tenant", b =>
                 {
                     b.Property<Guid>("TenantId")
                         .ValueGeneratedOnAdd()
@@ -50,9 +50,6 @@ namespace MesaApi.Migrations.Catalog
                         .HasColumnType("text");
 
                     b.HasKey("TenantId");
-
-                    b.HasIndex("Slug")
-                        .IsUnique();
 
                     b.ToTable("Tenants");
                 });

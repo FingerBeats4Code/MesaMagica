@@ -1,19 +1,26 @@
-﻿// Catalog/CatalogDbContext.cs
-using MesaApi.Model.Catalog;
+﻿using MesaApi.Model.Catalog;
 using Microsoft.EntityFrameworkCore;
 
 namespace MesaMagica.Api.Catalog;
+
 public class CatalogDbContext : DbContext
 {
-    public CatalogDbContext(DbContextOptions<CatalogDbContext> options) : base(options) { }
-    public DbSet<CatalogTenant> Tenants => Set<CatalogTenant>();
-
-    protected override void OnModelCreating(ModelBuilder b)
+    public CatalogDbContext(DbContextOptions<CatalogDbContext> options) : base(options)
     {
-        b.Entity<CatalogTenant>(e =>
+    }
+
+    public DbSet<Tenant> Tenants { get; set; } = null!; // Ensure this is present and not null
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Tenant>(entity =>
         {
-            e.HasKey(x => x.TenantId);
-            e.HasIndex(x => x.Slug).IsUnique();
+            entity.HasKey(t => t.TenantId);
+            entity.Property(t => t.Name).IsRequired();
+            entity.Property(t => t.Slug).IsRequired();
+            entity.Property(t => t.ConnectionString).IsRequired();
+            entity.Property(t => t.IsActive).IsRequired();
+            entity.Property(t => t.CreatedAt).IsRequired();
         });
     }
 }

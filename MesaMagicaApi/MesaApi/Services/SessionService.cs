@@ -10,24 +10,27 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 
-namespace MesaMagica.Api.Services;
+namespace MesaApi.Services;
 
 public class SessionService : ISessionService
 {
     private readonly ApplicationDbContext _db;
     private readonly JwtSettings _jwt;
-    private readonly ITenantContext _tenant;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
-    public SessionService(ApplicationDbContext db, IOptions<JwtSettings> jwt, ITenantContext tenant)
+    public SessionService(ApplicationDbContext db, IOptions<JwtSettings> jwt, IHttpContextAccessor httpContextAccessor)
     {
         _db = db;
         _jwt = jwt.Value;
-        _tenant = tenant;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     public async Task<(TableSession session, string jwt)> StartSessionAsync(int tableId, CancellationToken ct = default)
     {
-        if (!_tenant.HasTenant)
+        var tenantContext = _httpContextAccessor.HttpContext?.Items["TenantContext"] as ITenantContext
+            ?? throw new InvalidOperationException("Tenant context not resolved.");
+
+        if (!tenantContext.HasTenant)
             throw new InvalidOperationException("Tenant not resolved.");
 
         var table = await _db.RestaurantTables.FirstOrDefaultAsync(t => t.TableId == tableId, ct)
@@ -50,7 +53,7 @@ public class SessionService : ISessionService
         _db.RestaurantTables.Update(table);
         await _db.SaveChangesAsync(ct);
 
-        var jwt = GenerateJwt(session.SessionId, table.TableId, _tenant.TenantId);
+        var jwt = GenerateJwt(session.SessionId, table.TableId, tenantContext.TenantId);
         return (session, jwt);
     }
 

@@ -7,7 +7,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace MesaApi.Migrations.Tenant
 {
     /// <inheritdoc />
-    public partial class InitialTenant : Migration
+    public partial class uopTenant : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)

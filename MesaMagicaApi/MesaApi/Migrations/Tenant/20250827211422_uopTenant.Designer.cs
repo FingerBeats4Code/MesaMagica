@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace MesaApi.Migrations.Tenant
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20250825231930_InitialTenant")]
-    partial class InitialTenant
+    [Migration("20250827211422_uopTenant")]
+    partial class uopTenant
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

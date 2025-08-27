@@ -1,7 +1,6 @@
-﻿// Multitenancy/TenantResolutionMiddleware.cs
-using Microsoft.AspNetCore.Http;
-using Microsoft.EntityFrameworkCore;
+﻿using MesaApi.Multitenancy;
 using MesaMagica.Api.Catalog;
+using Microsoft.EntityFrameworkCore;
 
 namespace MesaMagica.Api.Multitenancy;
 
@@ -9,45 +8,49 @@ public class TenantResolutionMiddleware
 {
     private readonly RequestDelegate _next;
 
-    public TenantResolutionMiddleware(RequestDelegate next) => _next = next;
-
-    public async Task InvokeAsync(HttpContext ctx, CatalogDbContext catalog, TenantContext tenant)
+    public TenantResolutionMiddleware(RequestDelegate next)
     {
-        // 1) Try subdomain: <slug>.mesamagica.com
-        var host = ctx.Request.Host.Host; // e.g., pizzapalace.mesamagica.com
-        string? slug = null;
+        _next = next;
+    }
 
-        var parts = host.Split('.', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length >= 3) // e.g., slug.domain.tld
+    public async Task InvokeAsync(HttpContext context, IServiceProvider serviceProvider, CatalogDbContext catalogDbContext)
+    {
+        // Get tenant slug from header
+        var tenantSlug = context.Request.Headers["X-Tenant-Slug"].FirstOrDefault();
+        if (string.IsNullOrEmpty(tenantSlug))
         {
-            slug = parts[0];
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            await context.Response.WriteAsync("X-Tenant-Slug header is required.");
+            return;
         }
 
-        // 2) Fallback to header (useful for localhost)
-        if (string.IsNullOrWhiteSpace(slug) && ctx.Request.Headers.TryGetValue("X-Tenant-Slug", out var h))
-            slug = h.ToString();
-
-        if (!string.IsNullOrWhiteSpace(slug))
+        // Query Tenants table
+        var tenant = await catalogDbContext.Tenants
+            .FirstOrDefaultAsync(t => t.Slug == tenantSlug && t.IsActive);
+        if (tenant == null)
         {
-            var t = await catalog.Tenants.AsNoTracking()
-                .FirstOrDefaultAsync(x => x.Slug == slug && x.IsActive, ctx.RequestAborted);
-
-            if (t is not null)
-            {
-                tenant.TenantId = t.TenantId;
-                tenant.Slug = t.Slug;
-                tenant.ConnectionString = t.ConnectionString;
-                ctx.Items["TenantId"] = t.TenantId;
-            }
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            await context.Response.WriteAsync($"Tenant with slug '{tenantSlug}' not found or inactive.");
+            return;
         }
 
-        await _next(ctx);
+        // Create new TenantContext and replace in service scope
+        var scope = context.RequestServices.GetRequiredService<IServiceScopeFactory>().CreateScope();
+        var tenantContext = new TenantContext(tenant.TenantId, tenant.Slug, tenant.ConnectionString);
+        context.RequestServices = scope.ServiceProvider;
+        var serviceScope = serviceProvider.CreateScope();
+        serviceScope.ServiceProvider.GetRequiredService<ITenantContext>();
+        context.Items["TenantContext"] = tenantContext; // Store in HttpContext for access
+
+        // Continue pipeline
+        await _next(context);
     }
 }
 
-public static class TenantResolutionExtensions
+public static class TenantResolutionMiddlewareExtensions
 {
-    public static IApplicationBuilder UseTenantResolution(this IApplicationBuilder app)
-        => app.UseMiddleware<TenantResolutionMiddleware>();
+    public static IApplicationBuilder UseTenantResolution(this IApplicationBuilder builder)
+    {
+        return builder.UseMiddleware<TenantResolutionMiddleware>();
+    }
 }
-
