@@ -2,17 +2,22 @@
 
 public class TenantContext : ITenantContext
 {
-    public Guid TenantId { get; init; }
-    public string Slug { get; init; } = string.Empty;
-    public string ConnectionString { get; init; } = string.Empty;
-    public bool HasTenant => !string.IsNullOrEmpty(Slug) && !string.IsNullOrEmpty(ConnectionString);
-
-    public TenantContext() { }
-
-    public TenantContext(Guid tenantId, string slug, string connectionString)
+    public TenantContext(Guid tenantId, string slug, string connectionString, string tenantKey = "", string licenseKey = "", DateTime? licenseExpiration = null)
     {
         TenantId = tenantId;
-        Slug = slug ?? throw new ArgumentNullException(nameof(slug));
-        ConnectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
+        Slug = slug;
+        ConnectionString = connectionString;
+        TenantKey = tenantKey;
+        LicenseKey = licenseKey;
+        LicenseExpiration = licenseExpiration;
+        HasTenant = true;
     }
+
+    public Guid TenantId { get; }
+    public string Slug { get; }
+    public string ConnectionString { get; }
+    public string TenantKey { get; }
+    public string LicenseKey { get; }
+    public DateTime? LicenseExpiration { get; }
+    public bool HasTenant { get; }
 }

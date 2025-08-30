@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace MesaApi.Migrations.Catalog
 {
     [DbContext(typeof(CatalogDbContext))]
-    [Migration("20250827212554_InitialCatalog")]
-    partial class InitialCatalog
+    [Migration("20250830203844_AddTenantKeyAndLicense")]
+    partial class AddTenantKeyAndLicense
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -41,11 +41,22 @@ namespace MesaApi.Migrations.Catalog
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
+                    b.Property<DateTime?>("LicenseExpiration")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LicenseKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantKey")
                         .IsRequired()
                         .HasColumnType("text");
 

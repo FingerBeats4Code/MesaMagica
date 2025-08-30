@@ -3,40 +3,41 @@ using MesaMagica.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Design;
 using Microsoft.Extensions.Configuration;
+using System;
+using System.IO;
 
-namespace MesaMagica.Api.Data
+public class ApplicationDbContextFactory : IDesignTimeDbContextFactory<ApplicationDbContext>
 {
-    public class ApplicationDbContextFactory : IDesignTimeDbContextFactory<ApplicationDbContext>
+    public ApplicationDbContext CreateDbContext(string[] args)
     {
-        public ApplicationDbContext CreateDbContext(string[] args)
-        {
-            // Load configuration
-            var configuration = new ConfigurationBuilder()
-                .SetBasePath(Directory.GetCurrentDirectory())
-                .AddJsonFile("appsettings.json")
-                .Build();
+        // Load config
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(Directory.GetCurrentDirectory())
+            .AddJsonFile("appsettings.json")
+            .Build();
 
-            // Fallback connection string
-            var connectionString = configuration.GetConnectionString("TenantConnection");
-            if (string.IsNullOrEmpty(connectionString))
-                throw new InvalidOperationException("DefaultTenantConnection is missing in appsettings.json.");
+        // Fallback connection string (Tenant DB directly)
+        var connectionString = configuration.GetConnectionString("TenantConnection");
+        if (string.IsNullOrEmpty(connectionString))
+            throw new InvalidOperationException("TenantConnection is missing in appsettings.json.");
 
-            // Create dummy tenant for design-time
-            ITenantContext tenantContext = new TenantContext(
-                tenantId: Guid.NewGuid(),
-                slug: "design-time",
-                connectionString: connectionString
-            );
+        // Dummy tenant context with all required properties
+        ITenantContext tenantContext = new TenantContext(
+            tenantId: Guid.NewGuid(),
+            slug: "design-time",
+            connectionString: connectionString,
+            tenantKey: "key-design-time-1234567890",
+            licenseKey: "license-design-time-123",
+            licenseExpiration: DateTime.UtcNow.AddYears(5) // arbitrary expiration
+        );
 
-            // Build DbContext options
-            var optionsBuilder = new DbContextOptionsBuilder<ApplicationDbContext>();
-            optionsBuilder.UseNpgsql(connectionString)
-                          .EnableSensitiveDataLogging()
-                          .EnableDetailedErrors();
+        // Build DbContext options
+        var optionsBuilder = new DbContextOptionsBuilder<ApplicationDbContext>();
+        optionsBuilder.UseNpgsql(connectionString)
+                      .EnableSensitiveDataLogging()
+                      .EnableDetailedErrors();
 
-            // Pass dummy tenant context to constructor
-            return new ApplicationDbContext(optionsBuilder.Options, tenantContext);
-        }
+        // Return with dummy tenant
+        return new ApplicationDbContext(optionsBuilder.Options, tenantContext);
     }
 }
-

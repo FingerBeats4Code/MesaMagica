@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace MesaApi.Migrations.Catalog
 {
     /// <inheritdoc />
-    public partial class InitialCatalog : Migration
+    public partial class AddTenantKeyAndLicense : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -19,6 +19,9 @@ namespace MesaApi.Migrations.Catalog
                     Name = table.Column<string>(type: "text", nullable: false),
                     Slug = table.Column<string>(type: "text", nullable: false),
                     ConnectionString = table.Column<string>(type: "text", nullable: false),
+                    TenantKey = table.Column<string>(type: "text", nullable: false),
+                    LicenseKey = table.Column<string>(type: "text", nullable: false),
+                    LicenseExpiration = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
                     IsActive = table.Column<bool>(type: "boolean", nullable: false),
                     CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
                 },

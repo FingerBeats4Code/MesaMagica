@@ -38,11 +38,22 @@ namespace MesaApi.Migrations.Catalog
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
+                    b.Property<DateTime?>("LicenseExpiration")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LicenseKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TenantKey")
                         .IsRequired()
                         .HasColumnType("text");
 

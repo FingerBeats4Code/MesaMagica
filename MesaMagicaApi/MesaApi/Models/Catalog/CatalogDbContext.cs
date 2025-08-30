@@ -19,6 +19,9 @@ public class CatalogDbContext : DbContext
             entity.Property(t => t.Name).IsRequired();
             entity.Property(t => t.Slug).IsRequired();
             entity.Property(t => t.ConnectionString).IsRequired();
+            entity.Property(t => t.TenantKey).IsRequired();
+            entity.Property(t => t.LicenseKey).IsRequired();
+            entity.Property(t => t.LicenseExpiration);
             entity.Property(t => t.IsActive).IsRequired();
             entity.Property(t => t.CreatedAt).IsRequired();
         });
