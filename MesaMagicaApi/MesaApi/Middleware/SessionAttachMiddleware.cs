@@ -27,7 +27,7 @@ public class SessionAttachMiddleware
                 var jwt = new JwtSecurityTokenHandler().ReadJwtToken(token);
                 var sid = jwt.Claims.FirstOrDefault(c => c.Type == "sessionId")?.Value;
 
-                if (int.TryParse(sid, out var sessionId))
+                if (Guid.TryParse(sid, out var sessionId))
                 {
                     var session = await _sessionService.GetActiveAsync(sessionId, context.RequestAborted);
                     if (session is not null)

@@ -1,7 +1,7 @@
 using MesaApi.Multitenancy;
 using MesaApi.Services;
 using MesaMagica.Api.Catalog;
-using MesaMagica.Api.Data;
+using MesaMagica.Api.Extensions;
 using MesaMagica.Api.Multitenancy;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -25,37 +25,36 @@ builder.Services.AddSwaggerGen(c =>
         Name = "X-Tenant-Slug",
         Type = SecuritySchemeType.ApiKey,
         In = ParameterLocation.Header,
-        Description = "Tenant slug to identify the tenant"
+        Description = "Tenant slug to identify the tenant (e.g., pizzapalace)"
     });
     c.AddSecurityDefinition("TenantKey", new OpenApiSecurityScheme
     {
         Name = "X-Tenant-Key",
         Type = SecuritySchemeType.ApiKey,
         In = ParameterLocation.Header,
-        Description = "Tenant key for authentication"
+        Description = "Tenant key for authentication (e.g., key-pizzapalace-1234567890)"
+    });
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "Bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Enter 'Bearer {token}' obtained from POST /api/sessions/start"
     });
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "TenantSlug"
-                }
-            },
+            new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "TenantSlug" } },
             new string[] { }
         },
         {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "TenantKey"
-                }
-            },
+            new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "TenantKey" } },
+            new string[] { }
+        },
+        {
+            new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } },
             new string[] { }
         }
     });
@@ -83,39 +82,29 @@ builder.Services.AddDbContext<CatalogDbContext>(opt =>
        .EnableSensitiveDataLogging()
        .EnableDetailedErrors());
 
-// Register ApplicationDbContext with dynamic tenant-based connection string
-builder.Services.AddDbContext<ApplicationDbContext>((serviceProvider, options) =>
-{
-    var httpContextAccessor = serviceProvider.GetRequiredService<IHttpContextAccessor>();
-    var tenantContext = httpContextAccessor.HttpContext?.Items["TenantContext"] as ITenantContext;
-
-    if (tenantContext == null || !tenantContext.HasTenant)
-    {
-        throw new InvalidOperationException("Tenant context not resolved.");
-    }
-
-    options.UseNpgsql(tenantContext.ConnectionString)
-           .EnableSensitiveDataLogging()
-           .EnableDetailedErrors();
-});
-
 // Register ITenantContext with factory
 builder.Services.AddScoped<ITenantContext>(sp =>
 {
     var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
     var httpContext = httpContextAccessor.HttpContext;
 
-    // If middleware has already resolved tenant
-    if (httpContext?.Items["TenantContext"] is ITenantContext tenantContext && tenantContext.HasTenant)
+    // If middleware has resolved tenant
+    if (httpContext?.Items["TenantContext"] is TenantContext tenantContext && tenantContext.HasTenant)
     {
         return tenantContext;
     }
 
-    // Fallback tenant (e.g., for migrations, background tasks)
+    // Fallback tenant for non-HTTP contexts (e.g., migrations)
+    var fallbackConnectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+    if (string.IsNullOrWhiteSpace(fallbackConnectionString))
+    {
+        throw new InvalidOperationException("Fallback tenant connection string is not configured.");
+    }
+
     return new TenantContext(
         tenantId: Guid.NewGuid(),
         slug: "fallback-tenant",
-        connectionString: builder.Configuration.GetConnectionString("TenantConnection"),
+        connectionString: fallbackConnectionString,
         tenantKey: "key-fallback-123",
         licenseKey: "license-fallback-123",
         licenseExpiration: DateTime.UtcNow.AddYears(2)
@@ -123,7 +112,7 @@ builder.Services.AddScoped<ITenantContext>(sp =>
 });
 
 // Register application services
-builder.Services.AddScoped<ISessionService, SessionService>();
+builder.Services.AddMesaMagicaServices(builder.Configuration);
 
 // Configure JWT authentication
 var jwt = builder.Configuration.GetSection("Jwt");
@@ -161,7 +150,7 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseRouting();
 app.UseCors("AllowReactApp");
-app.UseTenantResolution(); // custom middleware
+app.UseTenantResolution();
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

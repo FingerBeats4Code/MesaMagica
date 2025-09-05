@@ -57,11 +57,12 @@ public class SessionService : ISessionService
         return (session, jwt);
     }
 
-    public Task<TableSession?> GetActiveAsync(int sessionId, CancellationToken ct = default)
+    public Task<TableSession?> GetActiveAsync(Guid sessionId, CancellationToken ct = default)
         => _db.TableSessions.Include(s => s.Table)
             .FirstOrDefaultAsync(s => s.SessionId == sessionId && s.IsActive, ct);
 
-    private string GenerateJwt(int sessionId, int tableId, Guid tenantId)
+    // Change the parameter type of sessionId in GenerateJwt from int to Guid
+    private string GenerateJwt(Guid sessionId, int tableId, Guid tenantId)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.Key));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

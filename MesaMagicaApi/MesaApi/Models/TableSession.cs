@@ -2,7 +2,7 @@
 {
     public class TableSession
     {
-        public int SessionId { get; set; }
+        public Guid SessionId { get; set; }
         public int TableId { get; set; }
         public RestaurantTable? Table { get; set; }
         public Guid SessionToken { get; set; } = Guid.NewGuid();
