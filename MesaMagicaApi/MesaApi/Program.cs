@@ -135,6 +135,7 @@ builder.Services.AddAuthentication(o =>
         ValidIssuer = jwt["Issuer"],
         ValidAudience = jwt["Audience"],
         IssuerSigningKey = new SymmetricSecurityKey(key)
+
     };
 });
 
