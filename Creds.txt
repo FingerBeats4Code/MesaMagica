@@ -1,0 +1,11 @@
+Creds
+
+"52544e7c-d627-46d4-b9a0-8b367f4fa514"	"Pizza Palace"	"pizzapalace"	"Host=localhost;Database=PizzaPalace;Username=postgres;Password=Aanya123;Port=5432"	"key-pizzapalace-1234567890"	"license-pizzapalace-123"	"2026-08-27 00:00:00-07"	true	"2025-08-27 00:00:00-07"
+
+cd C:\MesaMagica\MesaMagicaApi\MesaApi
+chcp 1252
+curl -X POST http://localhost:5000/api/sessions/start ^
+-H "Content-Type: application/json" ^
+-H "X-Tenant-Slug: pizzapalace" ^
+-H "X-Tenant-Key: key-pizzapalace-1234567890" ^
+-d "{\"QRCodeUrl\": \"https://mesamagica.app/?tenantSlug=pizzapalace&tableId=1\"}"
