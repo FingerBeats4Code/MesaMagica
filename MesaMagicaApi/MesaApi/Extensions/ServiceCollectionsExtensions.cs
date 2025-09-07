@@ -28,6 +28,8 @@ namespace MesaMagica.Api.Extensions
             services.AddScoped<IOrderService, OrderService>();
             services.AddScoped<IMenuService, MenuService>();
             services.AddScoped<ICategoryService, CategoryService>();
+            services.AddScoped<IUsersService, UsersService>();
+            services.AddScoped<IAuthService, AuthService>();
 
             return services;
         }

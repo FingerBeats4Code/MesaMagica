@@ -96,9 +96,17 @@ namespace MesaMagica.Api.Data
             {
                 e.HasKey(u => u.UserId);
                 e.HasIndex(u => u.Username).IsUnique();
-                e.Property(u => u.Role).HasMaxLength(50); // Matches Role column
+                e.HasIndex(u => u.Email).IsUnique();
+                e.Property(u => u.Role).HasMaxLength(50);
                 e.Property(u => u.Email).HasMaxLength(100);
                 e.Property(u => u.CreatedAt).HasColumnType("timestamp with time zone");
+                e.Property(u => u.UpdatedAt).HasColumnType("timestamp with time zone");
+                e.Property(u => u.LockedUntil).HasColumnType("timestamp with time zone");
+                e.Property(u => u.FailedLoginAttempts).HasDefaultValue(0);
+                e.HasOne(u => u.UpdatedByUser)
+                 .WithMany()
+                 .HasForeignKey(u => u.UpdatedBy)
+                 .OnDelete(DeleteBehavior.SetNull);
             });
         }
     }

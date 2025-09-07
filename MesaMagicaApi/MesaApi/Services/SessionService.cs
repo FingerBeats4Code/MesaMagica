@@ -85,4 +85,9 @@ public class SessionService : ISessionService
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
+
+    //public Task UpdateSessionStatusAsync(Guid sessionId, UpdateSessionStatusRequest request, ClaimsPrincipal user, string tenantSlug, string tenantKey, CancellationToken ct = default)
+    //{
+    //    throw new NotImplementedException();
+    //}
 }

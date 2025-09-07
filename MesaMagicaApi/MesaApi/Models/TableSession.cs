@@ -10,4 +10,5 @@
         public DateTime StartedAt { get; set; } = DateTime.UtcNow;
         public DateTime? EndedAt { get; set; }
     }
+
 }
