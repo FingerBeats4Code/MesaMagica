@@ -64,7 +64,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp", policyBuilder =>
     {
-        policyBuilder.WithOrigins("http://localhost:3000")
+        policyBuilder.WithOrigins("http://localhost:8000")
                      .AllowAnyHeader()
                      .AllowAnyMethod();
     });
@@ -110,7 +110,12 @@ builder.Services.AddScoped<ITenantContext>(sp =>
         licenseExpiration: DateTime.UtcNow.AddYears(2)
     );
 });
-
+// Add Redis
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = "localhost:6379"; // Your Redis connection string
+    options.InstanceName = "MesaMagica:";
+});
 // Register application services
 builder.Services.AddMesaMagicaServices(builder.Configuration);
 

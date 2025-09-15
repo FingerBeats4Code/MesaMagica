@@ -2,6 +2,8 @@
 using MesaApi.Multitenancy;
 using MesaApi.Services;
 using MesaMagica.Api.Data;
+using MesaMagicaApi.Services;
+using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 namespace MesaMagica.Api.Extensions
@@ -30,7 +32,8 @@ namespace MesaMagica.Api.Extensions
             services.AddScoped<ICategoryService, CategoryService>();
             services.AddScoped<IUsersService, UsersService>();
             services.AddScoped<IAuthService, AuthService>();
-
+            // Add CartService (see below)
+            services.AddScoped<ICartService, CartService>();
             return services;
         }
     }

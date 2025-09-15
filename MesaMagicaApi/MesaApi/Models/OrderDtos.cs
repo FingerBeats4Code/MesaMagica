@@ -8,6 +8,8 @@
     public class CreateOrderItemRequest
     {
         public Guid ItemId { get; set; }
+        public string ItemName { get; set; } = string.Empty; // Added
+        public decimal Price { get; set; } // Added
         public int Quantity { get; set; }
     }
 
