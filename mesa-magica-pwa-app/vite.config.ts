@@ -1,8 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
-
-// Optional: import path if you're using aliases
 import path from 'path';
 
 export default defineConfig({
@@ -39,18 +37,3 @@ export default defineConfig({
     },
   },
 });
-
-/*import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
-import path from "path";
-
-export default defineConfig({
-    plugins: [react(), tailwindcss()],
-    resolve: {
-        alias: {
-            "@": path.resolve(__dirname, "src/components"),
-        },
-    },
-});
-*/
