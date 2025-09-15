@@ -22,7 +22,7 @@ namespace MesaMagica.Api.Data
         public DbSet<OrderItem> OrderItems => Set<OrderItem>();
         public DbSet<User> Users => Set<User>();
         public DbSet<Category> Categories => Set<Category>();
-
+        public DbSet<CartItem> CartItems { get; set; }
         protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
         {
             if (!optionsBuilder.IsConfigured)
@@ -108,6 +108,23 @@ namespace MesaMagica.Api.Data
                  .HasForeignKey(u => u.UpdatedBy)
                  .OnDelete(DeleteBehavior.SetNull);
             });
+            modelBuilder.Entity<CartItem>()
+                .ToTable("CartItems")
+                .HasKey(c => c.Id);
+
+            // Foreign key: CartItem -> Session
+            modelBuilder.Entity<CartItem>()
+                .HasOne(c => c.Session)
+                .WithMany(s => s.CartItems) // One Session has many CartItems
+                .HasForeignKey(c => c.SessionId)
+                .OnDelete(DeleteBehavior.Cascade); // Delete cart items if session is deleted
+
+            // Foreign key: CartItem -> MenuItem
+            modelBuilder.Entity<CartItem>()
+                .HasOne(c => c.MenuItem)
+                .WithMany() // MenuItem can be in many carts (no reverse navigation)
+                .HasForeignKey(c => c.ItemId)
+                .OnDelete(DeleteBehavior.Restrict); // Prevent deleting MenuItem if in cart
         }
     }
 }

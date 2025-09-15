@@ -1,4 +1,5 @@
 ﻿using MesaApi.Models;
+using MesaApi.Multitenancy;
 using MesaMagica.Api.Catalog;
 using MesaMagica.Api.Data;
 using MesaMagica.Api.Multitenancy;
@@ -22,6 +23,7 @@ public class SessionResponse
 
 public class StartSessionRequest
 {
+    public string TableId { get; set; } = string.Empty; 
     public string QRCodeUrl { get; set; } = string.Empty;
 }
 
@@ -55,72 +57,67 @@ public class SessionsController : ControllerBase
             return BadRequest("QR code URL is required.");
         }
 
-        // Parse QR code URL
         try
         {
             var uri = new Uri(request.QRCodeUrl);
             var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
-            var tenantSlug = query["tenantSlug"];
-            var tableIdStr = query["tableId"];
+            //var tableIdStr = query["tableId"];
 
-            if (string.IsNullOrEmpty(tenantSlug) || string.IsNullOrEmpty(tableIdStr))
+            if (string.IsNullOrEmpty(request.TableId))
             {
                 _logger.LogWarning("Invalid QR code format. URL: {QRCodeUrl}", request.QRCodeUrl);
-                return BadRequest("Invalid QR code format. Must contain tenantSlug and tableId.");
+                return BadRequest("Invalid QR code format. Must contain tableId.");
             }
 
-            if (!int.TryParse(tableIdStr, out var tableId))
+            if (!int.TryParse(request.TableId, out var tableId))
             {
                 _logger.LogWarning("Invalid tableId in QR code. URL: {QRCodeUrl}", request.QRCodeUrl);
                 return BadRequest("Invalid tableId in QR code.");
             }
 
-            var tenantContext = HttpContext.Items["TenantContext"] as TenantContext;
-            if (tenantContext == null)
+            // 🔹 Get tenantSlug and apiKey from headers
+            var tenantSlug = HttpContext.Request.Headers["X-Tenant-Slug"].FirstOrDefault();
+            var tenantKey = HttpContext.Request.Headers["X-Tenant-Key"].FirstOrDefault();
+
+            if (string.IsNullOrEmpty(tenantSlug) || string.IsNullOrEmpty(tenantKey))
             {
-                _logger.LogWarning("Tenant context not found.");
-                return Unauthorized("Tenant context not found.");
+                _logger.LogWarning("Tenant slug or key not provided in headers.");
+                return Unauthorized("Tenant slug and key are required in headers.");
             }
 
-            if (tenantSlug.ToLower() != tenantContext.Slug.ToLower())
-            {
-                _logger.LogWarning("QR code tenant does not match current tenant. QR Slug: {QRSlug}, Tenant Slug: {TenantSlug}", tenantSlug, tenantContext.Slug);
-                return Unauthorized("QR code tenant does not match current tenant.");
-            }
-
-            // Validate tenant
+            // 🔹 Validate tenant
             var tenant = await _catalogDbContext.Tenants
-                .FirstOrDefaultAsync(t => t.Slug.ToLower() == tenantContext.Slug.ToLower() && t.TenantKey == tenantContext.TenantKey && t.IsActive);
+                .FirstOrDefaultAsync(t =>
+                    t.Slug.ToLower() == tenantSlug.ToLower() &&
+                    t.TenantKey == tenantKey &&
+                    t.IsActive);
+
             if (tenant == null)
             {
-                _logger.LogWarning("Tenant not found or invalid key. Slug: {TenantSlug}, Key: {TenantKey}", tenantContext.Slug, tenantContext.TenantKey);
-                return Unauthorized($"Tenant with slug '{tenantContext.Slug}' not found, inactive, or invalid key.");
+                _logger.LogWarning("Tenant not found or invalid key. Slug: {TenantSlug}, Key: {TenantKey}", tenantSlug, tenantKey);
+                return Unauthorized($"Tenant with slug '{tenantSlug}' not found, inactive, or invalid key.");
             }
 
             if (tenant.LicenseExpiration == null || tenant.LicenseExpiration < DateTime.UtcNow)
             {
-                _logger.LogWarning("Tenant license is invalid or expired. Slug: {TenantSlug}, LicenseKey: {LicenseKey}, LicenseExpiration: {LicenseExpiration}",
-                    tenant.Slug, tenant.LicenseKey, tenant.LicenseExpiration);
-                return StatusCode(StatusCodes.Status403Forbidden, $"Tenant '{tenantContext.Slug}' has an invalid or expired license.");
+                _logger.LogWarning("Tenant license is invalid or expired. Slug: {TenantSlug}", tenant.Slug);
+                return StatusCode(StatusCodes.Status403Forbidden, $"Tenant '{tenantSlug}' has an invalid or expired license.");
             }
 
-            // Validate table
-            var table = await _applicationDbContext.RestaurantTables
-                .FirstOrDefaultAsync(t => t.TableId == tableId);
+            // 🔹 Validate table
+            var table = await _applicationDbContext.RestaurantTables.FirstOrDefaultAsync(t => t.TableId == tableId);
             if (table == null)
             {
-                _logger.LogWarning("Table not found or inactive. TableId: {TableId}", tableId);
-                return NotFound($"Table with ID {tableId} not found or inactive.");
+                _logger.LogWarning("Table not found. TableId: {TableId}", tableId);
+                return NotFound($"Table with ID {tableId} not found.");
             }
 
-            // Check for existing active session
-            var existingSession = await _applicationDbContext.TableSessions
-                .FirstOrDefaultAsync(s => s.TableId == tableId && s.IsActive);
+            // 🔹 Check for existing session
+            var existingSession = await _applicationDbContext.TableSessions.FirstOrDefaultAsync(s => s.TableId == tableId && s.IsActive);
             var sessionId = existingSession?.SessionId ?? Guid.NewGuid();
 
             if (existingSession == null)
             {
-                // Create new session
                 var session = new TableSession
                 {
                     SessionId = sessionId,
@@ -132,11 +129,11 @@ public class SessionsController : ControllerBase
                 await _applicationDbContext.SaveChangesAsync();
             }
 
-            // Generate JWT
+        
             var claims = new[]
             {
                 new Claim("sessionId", sessionId.ToString()),
-                new Claim("tenantSlug", tenantContext.Slug),
+                new Claim("tenantSlug", tenant.Slug),
                 new Claim("tableId", tableId.ToString())
             };
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("+XZSsmqXdhRcDHumiZvggGVSSb6SkrMWlYN7ASk+jzDcY2lYkz2eqHuH7ANvJPLsrzDiWZNga1TZu6MMSmbL2w=="));
@@ -147,8 +144,6 @@ public class SessionsController : ControllerBase
                 expires: DateTime.UtcNow.AddMinutes(240),
                 signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256)
             );
-
-            _logger.LogDebug("Session started for tenant: {TenantSlug}, TableId: {TableId}, SessionId: {SessionId}", tenantContext.Slug, tableId, sessionId);
             return Ok(new SessionResponse
             {
                 SessionId = sessionId.ToString(),
@@ -161,4 +156,5 @@ public class SessionsController : ControllerBase
             return BadRequest("Invalid QR code URL format.");
         }
     }
+
 }

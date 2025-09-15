@@ -22,6 +22,33 @@ namespace MesaApi.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("MesaApi.Models.CartItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("AddedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ItemId");
+
+                    b.HasIndex("SessionId");
+
+                    b.ToTable("CartItems", (string)null);
+                });
+
             modelBuilder.Entity("MesaApi.Models.Category", b =>
                 {
                     b.Property<Guid>("CategoryId")
@@ -252,6 +279,25 @@ namespace MesaApi.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("MesaApi.Models.CartItem", b =>
+                {
+                    b.HasOne("MesaApi.Models.MenuItem", "MenuItem")
+                        .WithMany()
+                        .HasForeignKey("ItemId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MesaApi.Models.TableSession", "Session")
+                        .WithMany("CartItems")
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MenuItem");
+
+                    b.Navigation("Session");
+                });
+
             modelBuilder.Entity("MesaApi.Models.MenuItem", b =>
                 {
                     b.HasOne("MesaApi.Models.Category", "Category")
@@ -317,6 +363,11 @@ namespace MesaApi.Migrations
             modelBuilder.Entity("MesaApi.Models.Order", b =>
                 {
                     b.Navigation("OrderItems");
+                });
+
+            modelBuilder.Entity("MesaApi.Models.TableSession", b =>
+                {
+                    b.Navigation("CartItems");
                 });
 #pragma warning restore 612, 618
         }
