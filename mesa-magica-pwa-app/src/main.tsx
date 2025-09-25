@@ -3,6 +3,7 @@ import { BrowserRouter, useRoutes } from "react-router-dom";
 import { AppProvider } from "@/context/AppContext";
 import SessionInitializer from "@/components/SessionInitializer";
 import "./index.css";
+import { GlobalProvider } from './context/GlobalContext';
 
 // Load all pages from src/pages/
 const modules = import.meta.glob("./pages/**/*.tsx", { eager: true });
@@ -25,11 +26,13 @@ const rootElement = document.getElementById("root");
 if (rootElement) {
   createRoot(rootElement).render(
     <BrowserRouter>
+    <GlobalProvider>
       <AppProvider>
         <SessionInitializer>
           <App />
         </SessionInitializer>
       </AppProvider>
+      </GlobalProvider>
     </BrowserRouter>
   );
 } else {

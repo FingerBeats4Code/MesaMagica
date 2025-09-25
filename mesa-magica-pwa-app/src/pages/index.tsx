@@ -14,7 +14,6 @@ const App: React.FC = () => {
                 </div>
                 <Header />
                 <MainContent />
-                <OrderStatus />
             </div>
         </div>
     );

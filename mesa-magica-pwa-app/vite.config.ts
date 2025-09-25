@@ -31,6 +31,9 @@ export default defineConfig({
       },
     }),
   ],
+  define: {
+    'process.env': process.env, // Expose env vars if needed (Vite handles VITE_* automatically)
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),

@@ -5,7 +5,8 @@ interface AppContextType {
   sessionId: string;
   tenantSlug: string;
   tableId: string;
-  setAuth: (jwt: string, sessionId: string, tenantSlug: string, tableId: string) => void;
+  tenantKey: string;
+  setAuth: (jwt: string, sessionId: string, tenantSlug: string, tableId: string, tenantKey: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -15,16 +16,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [sessionId, setSessionId] = useState('');
   const [tenantSlug, setTenantSlug] = useState('');
   const [tableId, setTableId] = useState('');
+  const [tenantKey, setTenantKey] = useState('');
 
-  const setAuth = (newJwt: string, newSessionId: string, newTenantSlug: string, newTableId: string) => {
+  const setAuth = (newJwt: string, newSessionId: string, newTenantSlug: string, newTableId: string, newTenantKey: string) => {
     setJwt(newJwt);
     setSessionId(newSessionId);
     setTenantSlug(newTenantSlug);
     setTableId(newTableId);
+    setTenantKey(newTenantKey);
   };
 
   return (
-    <AppContext.Provider value={{ jwt, sessionId, tenantSlug, tableId, setAuth }}>
+    <AppContext.Provider value={{ jwt, sessionId, tenantSlug, tableId, tenantKey, setAuth }}>
       {children}
     </AppContext.Provider>
   );

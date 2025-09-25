@@ -54,10 +54,27 @@ export interface OrderItemResponse {
     quantity: number;
     price: number;
 }
+export interface ConfigResponse {
+    tenantKey: string;
+}
 
 const api = axios.create({
     baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
 });
+
+export const getConfig = async (tenantSlug: string): Promise<ConfigResponse> => {
+  try {
+    const response = await api.get('/api/Sessions/GetCofig', {
+      headers: {
+        'X-Tenant-Slug': tenantSlug,
+      },
+    });
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching config:', error);
+    throw error;
+  }
+};
 
 export const startSession = async (qrCodeUrl: string, tenantSlug: string, apiKey: string, tableId: string): Promise<SessionResponse> => {
   try {
@@ -168,21 +185,5 @@ export const submitOrder = async (jwt: string, tenantSlug: string, apiKey: strin
         throw error;
     }
 };
-/*
-export const submitOrder = async (jwt: string, tenantSlug: string, apiKey: string, sessionId: string, orderData: any) => {
-  try {
-    const response = await api.post(`/api/Orders`, { ...orderData, sessionId }, {
-      headers: {
-        'X-Tenant-Slug': tenantSlug,
-        'X-Tenant-Api-Key': apiKey,
-        'Authorization': `Bearer ${jwt}`,
-      },
-    });
-    return response.data;
-  } catch (error) {
-    console.error('Error submitting order:', error);
-    throw error;
-  }
-};
-*/
+
 export default api;
