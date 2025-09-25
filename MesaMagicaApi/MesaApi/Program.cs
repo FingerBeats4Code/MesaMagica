@@ -59,12 +59,13 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
 });
+builder.WebHost.UseUrls("http://*:80"); // mandatory inside container
 builder.Services.AddControllers();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowReactApp", policyBuilder =>
     {
-        policyBuilder.WithOrigins("http://localhost:8000")
+        policyBuilder.WithOrigins("http://*:80")
                      .AllowAnyHeader()
                      .AllowAnyMethod();
     });
