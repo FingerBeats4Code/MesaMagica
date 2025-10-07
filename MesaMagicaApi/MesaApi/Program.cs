@@ -16,24 +16,13 @@ builder.Logging.SetMinimumLevel(LogLevel.Debug);
 
 // Add services to the container.
 builder.Services.AddEndpointsApiExplorer();
+
+//-----------------------------changes for swagger security---------------
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "MesaMagica API", Version = "v1" });
-    c.EnableAnnotations();
-    c.AddSecurityDefinition("TenantSlug", new OpenApiSecurityScheme
-    {
-        Name = "X-Tenant-Slug",
-        Type = SecuritySchemeType.ApiKey,
-        In = ParameterLocation.Header,
-        Description = "Tenant slug to identify the tenant (e.g., pizzapalace)"
-    });
-    c.AddSecurityDefinition("TenantKey", new OpenApiSecurityScheme
-    {
-        Name = "X-Tenant-Key",
-        Type = SecuritySchemeType.ApiKey,
-        In = ParameterLocation.Header,
-        Description = "Tenant key for authentication (e.g., key-pizzapalace-1234567890)"
-    });
+
+    // Only JWT now
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Name = "Authorization",
@@ -41,33 +30,30 @@ builder.Services.AddSwaggerGen(c =>
         Scheme = "Bearer",
         BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "Enter 'Bearer {token}' obtained from POST /api/sessions/start"
+        Description = "Enter 'Bearer {token}'"
     });
+
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
-            new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "TenantSlug" } },
-            new string[] { }
-        },
-        {
-            new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "TenantKey" } },
-            new string[] { }
-        },
-        {
             new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } },
-            new string[] { }
+            Array.Empty<string>()
         }
     });
 });
+
+
 builder.WebHost.UseUrls("http://*:80"); // mandatory inside container
 builder.Services.AddControllers();
+//var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowReactApp", policyBuilder =>
+    options.AddPolicy("AllowConfiguredOrigins", policy =>
     {
-        policyBuilder.WithOrigins("http://*:80")
-                     .AllowAnyHeader()
-                     .AllowAnyMethod();
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyHeader()
+              .AllowAnyMethod();
     });
 });
 
@@ -111,13 +97,7 @@ builder.Services.AddScoped<ITenantContext>(sp =>
         licenseExpiration: DateTime.UtcNow.AddYears(2)
     );
 });
-// Add Redis
-builder.Services.AddStackExchangeRedisCache(options =>
-{
-    options.Configuration = "localhost:6379"; // Your Redis connection string
-    options.InstanceName = "MesaMagica:";
-});
-// Register application services
+
 builder.Services.AddMesaMagicaServices(builder.Configuration);
 
 // Configure JWT authentication
@@ -153,7 +133,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
-
+app.UseCors("AllowConfiguredOrigins");
 app.UseHttpsRedirection();
 app.UseRouting();
 app.UseCors("AllowReactApp");

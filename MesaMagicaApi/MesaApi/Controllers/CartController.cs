@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MesaMagicaApi.Services;
+using MesaApi.Multitenancy;
 
 namespace MesaMagicaApi.Controllers
 {
@@ -10,10 +11,12 @@ namespace MesaMagicaApi.Controllers
     public class CartController : ControllerBase
     {
         private readonly ICartService _cartService;
+        private readonly ITenantContext _tenantContext;
 
-        public CartController(ICartService cartService)
+        public CartController(ICartService cartService, ITenantContext tenantContext)
         {
             _cartService = cartService;
+            _tenantContext = tenantContext;
         }
 
         [HttpGet]
@@ -40,7 +43,14 @@ namespace MesaMagicaApi.Controllers
         [HttpPost("submit")]
         public async Task<IActionResult> SubmitOrder([FromBody] SubmitOrderRequest request)
         {
-            var orderResponse = await _cartService.SubmitOrderAsync(request.SessionId, request.TableId, request.TenantSlug, User);
+            //-----------------------------changes for tenant validation-----------------
+            // Use tenantKey from TenantContext (resolved from subdomain + validated in JWT)
+            var tenantKey = _tenantContext.TenantKey;
+            if (string.IsNullOrEmpty(tenantKey))
+                return BadRequest("Tenant key is missing.");
+            //----------------------------------------------------------------------------
+
+            var orderResponse = await _cartService.SubmitOrderAsync(request.SessionId, request.TableId, tenantKey, User);
             return Ok(orderResponse);
         }
     }
@@ -58,10 +68,13 @@ namespace MesaMagicaApi.Controllers
         public Guid ItemId { get; set; }
     }
 
-     public class SubmitOrderRequest
+    public class SubmitOrderRequest
     {
         public Guid SessionId { get; set; }
         public string TableId { get; set; } = string.Empty;
-        public string TenantSlug { get; set; } = string.Empty;
+
+        //-----------------------------changes for reason-----------------
+        // Removed TenantSlug from request because tenant is now in JWT + TenantContext
+        //----------------------------------------------------------------
     }
 }

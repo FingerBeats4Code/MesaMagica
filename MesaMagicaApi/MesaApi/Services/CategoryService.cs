@@ -19,10 +19,16 @@ namespace MesaApi.Services
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        private async Task ValidateAdminUserAsync(ClaimsPrincipal user, string tenantSlug)
+        private async Task ValidateAdminUserAsync(ClaimsPrincipal user, string tenantKey)
         {
+            //-----------------------------changes for tenant claim validation-----------------
             if (!user.IsInRole("Admin"))
                 throw new UnauthorizedAccessException("User is not authorized to perform this action.");
+
+            var userTenantKey = user.FindFirst("tenantKey")?.Value;
+            if (string.IsNullOrEmpty(userTenantKey) || userTenantKey != tenantKey)
+                throw new UnauthorizedAccessException("Tenant mismatch in JWT token.");
+            //----------------------------------------------------------------------------
 
             var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
@@ -32,18 +38,14 @@ namespace MesaApi.Services
                 .FirstOrDefaultAsync(u => u.UserId == userId && u.Role == "Admin" && u.IsActive);
             if (dbUser == null)
                 throw new UnauthorizedAccessException("User is not an active admin in the database.");
-
-            var userTenantSlug = user.FindFirst("tenantSlug")?.Value;
-            if (string.IsNullOrEmpty(userTenantSlug) || userTenantSlug != tenantSlug)
-                throw new UnauthorizedAccessException("Tenant mismatch in request.");
         }
 
-        public async Task<CategoryResponse> CreateCategoryAsync(CreateCategoryRequest request, ClaimsPrincipal user, string tenantSlug)
+        public async Task<CategoryResponse> CreateCategoryAsync(CreateCategoryRequest request, ClaimsPrincipal user, string tenantKey)
         {
-            if (string.IsNullOrEmpty(tenantSlug))
-                throw new ArgumentException("Tenant slug is missing.");
+            if (string.IsNullOrEmpty(tenantKey))
+                throw new ArgumentException("Tenant key is missing.");
 
-            await ValidateAdminUserAsync(user, tenantSlug);
+            await ValidateAdminUserAsync(user, tenantKey);
 
             if (string.IsNullOrEmpty(request.Name))
                 throw new ArgumentException("Category name is required.");
@@ -63,8 +65,8 @@ namespace MesaApi.Services
             _dbContext.Categories.Add(category);
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation("Category created. CategoryId: {CategoryId}, Name: {Name}, TenantSlug: {TenantSlug}",
-                category.CategoryId, category.Name, tenantSlug);
+            _logger.LogInformation("Category created. CategoryId: {CategoryId}, Name: {Name}, TenantKey: {TenantKey}",
+                category.CategoryId, category.Name, tenantKey);
 
             return new CategoryResponse
             {
@@ -74,12 +76,12 @@ namespace MesaApi.Services
             };
         }
 
-        public async Task<CategoryResponse> UpdateCategoryAsync(Guid categoryId, UpdateCategoryRequest request, ClaimsPrincipal user, string tenantSlug)
+        public async Task<CategoryResponse> UpdateCategoryAsync(Guid categoryId, UpdateCategoryRequest request, ClaimsPrincipal user, string tenantKey)
         {
-            if (string.IsNullOrEmpty(tenantSlug))
-                throw new ArgumentException("Tenant slug is missing.");
+            if (string.IsNullOrEmpty(tenantKey))
+                throw new ArgumentException("Tenant key is missing.");
 
-            await ValidateAdminUserAsync(user, tenantSlug);
+            await ValidateAdminUserAsync(user, tenantKey);
 
             if (string.IsNullOrEmpty(request.Name))
                 throw new ArgumentException("Category name is required.");
@@ -98,8 +100,8 @@ namespace MesaApi.Services
             category.IsActive = request.IsActive;
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation("Category updated. CategoryId: {CategoryId}, Name: {Name}, TenantSlug: {TenantSlug}",
-                category.CategoryId, category.Name, tenantSlug);
+            _logger.LogInformation("Category updated. CategoryId: {CategoryId}, Name: {Name}, TenantKey: {TenantKey}",
+                category.CategoryId, category.Name, tenantKey);
 
             return new CategoryResponse
             {
@@ -109,12 +111,12 @@ namespace MesaApi.Services
             };
         }
 
-        public async Task DeleteCategoryAsync(Guid categoryId, ClaimsPrincipal user, string tenantSlug)
+        public async Task DeleteCategoryAsync(Guid categoryId, ClaimsPrincipal user, string tenantKey)
         {
-            if (string.IsNullOrEmpty(tenantSlug))
-                throw new ArgumentException("Tenant slug is missing.");
+            if (string.IsNullOrEmpty(tenantKey))
+                throw new ArgumentException("Tenant key is missing.");
 
-            await ValidateAdminUserAsync(user, tenantSlug);
+            await ValidateAdminUserAsync(user, tenantKey);
 
             var category = await _dbContext.Categories
                 .FirstOrDefaultAsync(c => c.CategoryId == categoryId);
@@ -129,14 +131,14 @@ namespace MesaApi.Services
             _dbContext.Categories.Remove(category);
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation("Category deleted. CategoryId: {CategoryId}, TenantSlug: {TenantSlug}",
-                categoryId, tenantSlug);
+            _logger.LogInformation("Category deleted. CategoryId: {CategoryId}, TenantKey: {TenantKey}",
+                categoryId, tenantKey);
         }
 
-        public async Task<List<CategoryResponse>> GetCategoriesAsync(string tenantSlug)
+        public async Task<List<CategoryResponse>> GetCategoriesAsync(string tenantKey)
         {
-            if (string.IsNullOrEmpty(tenantSlug))
-                throw new ArgumentException("Tenant slug is missing.");
+            if (string.IsNullOrEmpty(tenantKey))
+                throw new ArgumentException("Tenant key is missing.");
 
             var categories = await _dbContext.Categories
                 .Where(c => c.IsActive)
@@ -151,10 +153,10 @@ namespace MesaApi.Services
             return categories;
         }
 
-        public async Task<CategoryResponse> GetCategoryAsync(Guid categoryId, string tenantSlug)
+        public async Task<CategoryResponse> GetCategoryAsync(Guid categoryId, string tenantKey)
         {
-            if (string.IsNullOrEmpty(tenantSlug))
-                throw new ArgumentException("Tenant slug is missing.");
+            if (string.IsNullOrEmpty(tenantKey))
+                throw new ArgumentException("Tenant key is missing.");
 
             var category = await _dbContext.Categories
                 .FirstOrDefaultAsync(c => c.CategoryId == categoryId);

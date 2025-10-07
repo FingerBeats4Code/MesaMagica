@@ -7,5 +7,6 @@
         public string QRCodeUrl { get; set; } = null!;
         public bool IsOccupied { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public int TableSeatSize { get; set; } = 4; // default value if not specified
     }
 }

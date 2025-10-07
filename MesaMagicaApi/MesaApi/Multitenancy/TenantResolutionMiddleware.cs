@@ -17,27 +17,35 @@ public class TenantResolutionMiddleware
 
     public async Task InvokeAsync(HttpContext context, IServiceProvider serviceProvider, CatalogDbContext catalogDbContext)
     {
-        var tenantSlug = context.Request.Headers["X-Tenant-Slug"].FirstOrDefault();
-        var tenantKey = context.Request.Headers["X-Tenant-Key"].FirstOrDefault();
-        var path = context.Request.Path.Value?.ToLower();
+        // Get IHostEnvironment from DI
+        var env = serviceProvider.GetService<IHostEnvironment>();
+        // ----------------- changes: resolve tenant from domain instead of header -----------------
+        var host = context.Request.Host.Host; // e.g., mesa.tenantA.com
+        var parts = host.Split('.');
+        string tenantSlugFromDomain = null;
 
-        if (string.IsNullOrEmpty(tenantSlug))
+        if (parts.Length >= 3 && parts[0].Equals("mesa", StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogWarning("X-Tenant-Slug header is missing for path: {Path}", path);
+            tenantSlugFromDomain = parts[1]; // tenantname from domain
+        }
+
+        // ----------------- changes: optional X-Slug header can still be read -----------------
+        var slugHeader = context.Request.Headers["X-Slug"].FirstOrDefault();
+        // ----------------- DEVELOPMENT FALLBACK -----------------
+        if (string.IsNullOrEmpty(tenantSlugFromDomain) && env != null && HostEnvironmentEnvExtensions.IsDevelopment(env))
+        {
+            tenantSlugFromDomain = "pizzapalace"; // replace with your local default tenant slug
+            _logger.LogWarning("Using development default tenant slug: {TenantSlug}", tenantSlugFromDomain);
+        }
+        if (string.IsNullOrEmpty(tenantSlugFromDomain))
+        {
+            _logger.LogWarning("Tenant could not be resolved from domain: {Host}", host);
             context.Response.StatusCode = StatusCodes.Status400BadRequest;
-            await context.Response.WriteAsync("X-Tenant-Slug header is required.");
+            await context.Response.WriteAsync("Tenant could not be resolved from subdomain.");
             return;
         }
 
-        if (string.IsNullOrEmpty(tenantKey))
-        {
-            _logger.LogWarning("X-Tenant-Key header is missing for slug: {TenantSlug}, path: {Path}", tenantSlug, path);
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            await context.Response.WriteAsync("X-Tenant-Key header is required.");
-            return;
-        }
-
-        _logger.LogDebug("Querying tenant with slug: {TenantSlug} for path: {Path}", tenantSlug, path);
+        _logger.LogDebug("Querying tenant from slug: {TenantSlug} (domain) for path: {Path}", tenantSlugFromDomain, context.Request.Path);
 
         if (catalogDbContext.Tenants == null)
         {
@@ -47,37 +55,39 @@ public class TenantResolutionMiddleware
             return;
         }
 
-        var tenants = await catalogDbContext.Tenants.ToListAsync();
-        _logger.LogDebug("Available tenants: [{Tenants}]", string.Join(", ", tenants.Select(t => $"Slug: {t.Slug}, IsActive: {t.IsActive}")));
-
+        // ----------------- changes: remove tenantKey header validation -----------------
         var tenant = await catalogDbContext.Tenants
-            .FirstOrDefaultAsync(t => t.Slug.ToLower() == tenantSlug.ToLower() && t.TenantKey == tenantKey && t.IsActive);
+            .FirstOrDefaultAsync(t => t.Slug.ToLower() == tenantSlugFromDomain.ToLower() && t.IsActive);
+
         if (tenant == null)
         {
-            _logger.LogWarning("Tenant not found or invalid key. Slug: {TenantSlug}, Key: {TenantKey}, Path: {Path}, Available tenants: [{Tenants}]",
-                tenantSlug, tenantKey, path, string.Join(", ", tenants.Select(t => $"Slug: {t.Slug}, IsActive: {t.IsActive}")));
+            _logger.LogWarning("Tenant not found or inactive. Slug: {TenantSlug}, Path: {Path}", tenantSlugFromDomain, context.Request.Path);
             context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            await context.Response.WriteAsync($"Tenant with slug '{tenantSlug}' not found, inactive, or invalid key.");
+            await context.Response.WriteAsync($"Tenant '{tenantSlugFromDomain}' not found or inactive.");
             return;
         }
 
-        _logger.LogDebug("Found tenant: Slug={Slug}, IsActive={IsActive}, ConnectionString={ConnectionString}, TenantKey={TenantKey}, LicenseKey={LicenseKey}, LicenseExpiration={LicenseExpiration}",
-            tenant.Slug, tenant.IsActive, tenant.ConnectionString, tenant.TenantKey, tenant.LicenseKey, tenant.LicenseExpiration);
+        _logger.LogDebug("Found tenant: Slug={Slug}, IsActive={IsActive}, ConnectionString={ConnectionString}, LicenseKey={LicenseKey}, LicenseExpiration={LicenseExpiration}",
+            tenant.Slug, tenant.IsActive, tenant.ConnectionString, tenant.LicenseKey, tenant.LicenseExpiration);
 
+        // ----------------- changes: build TenantContext as before, using resolved tenant -----------------
         var tenantContext = new TenantContext(
             tenantId: tenant.TenantId,
             slug: tenant.Slug,
             connectionString: tenant.ConnectionString,
-            tenantKey: tenant.TenantKey,
+            tenantKey: tenant.TenantKey, // optional for JWT if needed
             licenseKey: tenant.LicenseKey,
             licenseExpiration: tenant.LicenseExpiration
         );
+
+        // ----------------- changes: attach TenantContext to HttpContext -----------------
         context.Items["TenantContext"] = tenantContext;
 
         await _next(context);
     }
 }
 
+// ----------------- changes: extension method remains unchanged -----------------
 public static class TenantResolutionMiddlewareExtensions
 {
     public static IApplicationBuilder UseTenantResolution(this IApplicationBuilder builder)

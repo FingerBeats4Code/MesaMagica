@@ -1,10 +1,13 @@
 ﻿using MesaApi.Interface;
+using MesaApi.Models;
 using MesaApi.Multitenancy;
 using MesaApi.Services;
 using MesaMagica.Api.Data;
 using MesaMagicaApi.Services;
 using Microsoft.AspNetCore.Cors.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using StackExchange.Redis;
 
 namespace MesaMagica.Api.Extensions
 {
@@ -24,7 +27,6 @@ namespace MesaMagica.Api.Extensions
                        .EnableSensitiveDataLogging()
                        .EnableDetailedErrors();
             });
-
             services.AddScoped<ISessionService, SessionService>();
             services.AddSingleton<ILoggingService, LoggingService>();
             services.AddScoped<IOrderService, OrderService>();
@@ -34,6 +36,23 @@ namespace MesaMagica.Api.Extensions
             services.AddScoped<IAuthService, AuthService>();
             // Add CartService (see below)
             services.AddScoped<ICartService, CartService>();
+            services.AddHttpClient(); // IHttpClientFactory
+            services.Configure<UpstashSettings>(configuration.GetSection("Upstash"));
+            services.AddSingleton(sp => sp.GetRequiredService<IOptions<UpstashSettings>>().Value);
+            services.AddSingleton<IConnectionMultiplexer>(sp =>
+            {
+                var config = configuration.GetSection("Upstash").GetValue<string>("Configuration");
+                return ConnectionMultiplexer.Connect(config!);
+            });
+            if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development")
+            {
+                services.AddSingleton<IRedisService, MemoryRedisService>();
+            }
+            else
+            {
+                services.AddScoped<IRedisService, RedisService>();
+            }
+
             return services;
         }
     }

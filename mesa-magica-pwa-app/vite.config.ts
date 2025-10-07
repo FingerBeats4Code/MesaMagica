@@ -31,12 +31,19 @@ export default defineConfig({
       },
     }),
   ],
-  define: {
-    'process.env': process.env, // Expose env vars if needed (Vite handles VITE_* automatically)
-  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
     },
+  },
+  server: {
+    host: true,
+    port: 8000,
+    allowedHosts: [
+      'localhost',
+      'localhost.pizzapalace',
+      'localhost.burgerhub',
+      'localhost.sushisquare',
+    ],
   },
 });

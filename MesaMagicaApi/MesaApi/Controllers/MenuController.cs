@@ -3,6 +3,7 @@ using MesaApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MesaApi.Multitenancy;
+using System.Security.Claims;
 
 namespace MesaApi.Controllers
 {
@@ -19,16 +20,19 @@ namespace MesaApi.Controllers
             _tenantContext = tenantContext ?? throw new ArgumentNullException(nameof(tenantContext));
         }
 
+        // ---------------- Admin APIs ----------------
+
         [HttpPost("items")]
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<MenuItemResponse>> CreateMenuItem([FromBody] CreateMenuItemRequest request)
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            //---------------- change: tenant comes from JWT claim ----------------
+            var tenantId = User.FindFirst("tenantId")?.Value;
+            if (tenantId == null) return Unauthorized("Tenant not found in JWT.");
 
             try
             {
-                var menuItem = await _menuService.CreateMenuItemAsync(request, User, _tenantContext.Slug);
+                var menuItem = await _menuService.CreateMenuItemAsync(request, User, tenantId);
                 return CreatedAtAction(nameof(GetMenuItem), new { id = menuItem.ItemId }, menuItem);
             }
             catch (ArgumentException ex)
@@ -45,12 +49,12 @@ namespace MesaApi.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<MenuItemResponse>> UpdateMenuItem(Guid id, [FromBody] UpdateMenuItemRequest request)
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            var tenantId = User.FindFirst("tenantId")?.Value;
+            if (tenantId == null) return Unauthorized("Tenant not found in JWT.");
 
             try
             {
-                var menuItem = await _menuService.UpdateMenuItemAsync(id, request, User, _tenantContext.Slug);
+                var menuItem = await _menuService.UpdateMenuItemAsync(id, request, User, tenantId);
                 return Ok(menuItem);
             }
             catch (ArgumentException ex)
@@ -67,12 +71,12 @@ namespace MesaApi.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteMenuItem(Guid id)
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            var tenantId = User.FindFirst("tenantId")?.Value;
+            if (tenantId == null) return Unauthorized("Tenant not found in JWT.");
 
             try
             {
-                await _menuService.DeleteMenuItemAsync(id, User, _tenantContext.Slug);
+                await _menuService.DeleteMenuItemAsync(id, User, tenantId);
                 return NoContent();
             }
             catch (ArgumentException ex)
@@ -85,25 +89,30 @@ namespace MesaApi.Controllers
             }
         }
 
+        // ---------------- Session APIs ----------------
+
         [HttpGet("items")]
+        [Authorize] // any valid token: session or admin
         public async Task<ActionResult<List<MenuItemResponse>>> GetMenuItems()
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            //---------------- change: tenant comes from JWT claim ----------------
+            var tenantId = User.FindFirst("tenantKey")?.Value;
+            if (tenantId == null) return Unauthorized("Tenant not found in JWT.");
 
-            var menuItems = await _menuService.GetMenuItemsAsync(_tenantContext.Slug);
+            var menuItems = await _menuService.GetMenuItemsAsync(tenantId);
             return Ok(menuItems);
         }
 
         [HttpGet("items/{id}")]
+        [Authorize] // any valid token
         public async Task<ActionResult<MenuItemResponse>> GetMenuItem(Guid id)
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            var tenantId = User.FindFirst("tenantId")?.Value;
+            if (tenantId == null) return Unauthorized("Tenant not found in JWT.");
 
             try
             {
-                var menuItem = await _menuService.GetMenuItemAsync(id, _tenantContext.Slug);
+                var menuItem = await _menuService.GetMenuItemAsync(id, tenantId);
                 return Ok(menuItem);
             }
             catch (ArgumentException ex)

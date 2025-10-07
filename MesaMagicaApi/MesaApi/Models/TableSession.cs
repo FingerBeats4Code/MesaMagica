@@ -11,6 +11,8 @@
         public DateTime? EndedAt { get; set; }
         // Navigation property for CartItems
         public ICollection<CartItem> CartItems { get; set; } = new List<CartItem>();
+        public int SessionCount { get; set; } = 0;
+
     }
 
 }

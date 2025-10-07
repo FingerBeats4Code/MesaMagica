@@ -3,6 +3,7 @@ import { useAppContext } from "@/context/AppContext";
 import Menu from "@/components/Menu";
 import Cart from "@/components/Cart";
 import Order from "@/components/Order";
+import { useSearchParams } from 'react-router-dom';
 import { getCategories, getMenuItems, submitOrder, addToCartBackend, removeFromCartBackend, getCart, Category, MenuItemResponse, CartItem, OrderResponse } from "@/api/api";
 
 interface FoodCardProps {
@@ -32,7 +33,7 @@ const FoodCard: React.FC<FoodCardProps> = ({ name, price, description, imageSrc,
               type="button"
               className="border border-zinc-300/70 dark:border-white/20 flex hover:bg-neutral-100 dark:hover:bg-neutral-800 w-8 h-8 rounded-full items-center justify-center"
               onClick={onDecrement}
-              disabled={quantity <= 1}
+              disabled={quantity <= 0} // Allow decrement until quantity is 0
             >
               -
             </button>
@@ -59,42 +60,68 @@ const FoodCard: React.FC<FoodCardProps> = ({ name, price, description, imageSrc,
 };
 
 const MainContent: React.FC = () => {
+  const [searchParams] = useSearchParams();
+  const tableId = searchParams.get('tableId') || 'default-table-id';
+  const hostname = window.location.hostname;
+  const tenantSlug = hostname.includes('.') ? hostname.split('.')[1] : 'MesaMagica';
   const [categories, setCategories] = useState<Category[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItemResponse[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
 
-  const { jwt, sessionId, tenantSlug, tableId, tenantKey } = useAppContext();
+  const { jwt, sessionId } = useAppContext();
 
+  // Fetch categories, menu items, and cart on mount or when selectedCategory changes
   useEffect(() => {
-    const fetchData = async () => {
-      if (!jwt || !sessionId || !tenantSlug || !tenantKey) return;
+    const fetchInitialData = async () => {
+      if (!jwt || !sessionId) return;
 
+      console.log(`[${new Date().toISOString()}] Fetching initial data for tenant: ${tenantSlug}, tableId: ${tableId}, sessionId: ${sessionId}`);
       try {
-        const cats = await getCategories(tenantSlug, tenantKey, jwt);
+        const cats = await getCategories();
         setCategories(cats);
-        const items = await getMenuItems(tenantSlug, tenantKey, jwt, selectedCategory ?? undefined);
+        const items = await getMenuItems(selectedCategory ?? undefined);
         setMenuItems(items);
-        const cartData = await getCart(tenantSlug, tenantKey, jwt, sessionId);
+        const cartData = await getCart(sessionId);
         setCart(cartData);
       } catch (error) {
-        console.error('Failed to fetch data:', error);
+        console.error('Failed to fetch initial data:', error);
       }
     };
 
-    fetchData();
-    const interval = setInterval(fetchData, 5000);
+    fetchInitialData();
+  }, [jwt, sessionId, selectedCategory]);
+
+  // Poll for cart updates only when cart is non-empty
+  useEffect(() => {
+    if (!jwt || !sessionId || cart.length === 0) return;
+
+    const fetchCart = async () => {
+      console.log(`[${new Date().toISOString()}] Polling cart for tenant: ${tenantSlug}, tableId: ${tableId}, sessionId: ${sessionId}`);
+      try {
+        const cartData = await getCart(sessionId);
+        setCart(cartData);
+      } catch (error) {
+        console.error('Failed to fetch cart:', error);
+      }
+    };
+
+    const interval = setInterval(fetchCart, 30000); // Poll every 30 seconds
     return () => clearInterval(interval);
-  }, [jwt, sessionId, tenantSlug, tenantKey, selectedCategory]);
+  }, [jwt, sessionId, cart.length]);
 
   const handleCategorySelect = (categoryId: string | null) => {
     setSelectedCategory(categoryId);
   };
 
   const handleAddToCart = async (item: MenuItemResponse) => {
+    if (!sessionId) {
+      alert('Session not initialized. Please try again.');
+      return;
+    }
     try {
-      await addToCartBackend(tenantSlug, tenantKey, jwt, sessionId, item.itemId, 1);
-      const updatedCart = await getCart(tenantSlug, tenantKey, jwt, sessionId);
+      await addToCartBackend(sessionId, item.itemId, 1);
+      const updatedCart = await getCart(sessionId);
       setCart(updatedCart);
     } catch (error) {
       alert('Error adding to cart');
@@ -102,9 +129,13 @@ const MainContent: React.FC = () => {
   };
 
   const handleIncrement = async (itemId: string) => {
+    if (!sessionId) {
+      alert('Session not initialized. Please try again.');
+      return;
+    }
     try {
-      await addToCartBackend(tenantSlug, tenantKey, jwt, sessionId, itemId, 1);
-      const updatedCart = await getCart(tenantSlug, tenantKey, jwt, sessionId);
+      await addToCartBackend(sessionId, itemId, 1);
+      const updatedCart = await getCart(sessionId);
       setCart(updatedCart);
     } catch (error) {
       alert('Error updating cart');
@@ -112,9 +143,13 @@ const MainContent: React.FC = () => {
   };
 
   const handleDecrement = async (itemId: string) => {
+    if (!sessionId) {
+      alert('Session not initialized. Please try again.');
+      return;
+    }
     try {
-      await removeFromCartBackend(tenantSlug, tenantKey, jwt, sessionId, itemId);
-      const updatedCart = await getCart(tenantSlug, tenantKey, jwt, sessionId);
+      await removeFromCartBackend(sessionId, itemId);
+      const updatedCart = await getCart(sessionId);
       setCart(updatedCart);
     } catch (error) {
       alert('Error updating cart');
@@ -122,11 +157,12 @@ const MainContent: React.FC = () => {
   };
 
   const handlePlaceOrder = async () => {
+    if (!sessionId) {
+      alert('Session not initialized. Please try again.');
+      return;
+    }
     try {
-      const orderResponse = await submitOrder(jwt, tenantSlug, tenantKey, sessionId, {
-        tableId,
-        tenantSlug
-      });
+      const orderResponse = await submitOrder(sessionId, { tableId });
       alert(`Order submitted successfully! Order ID: ${orderResponse.orderId}`);
       setCart([]);
     } catch (error) {
@@ -142,8 +178,10 @@ const MainContent: React.FC = () => {
             <span className="w-2 h-2 bg-green-500 rounded-full"></span>
             <span className="text-gray-700 dark:text-neutral-300">Fresh &amp; Delicious</span>
           </div>
-          <p className="text-4xl font-bold leading-tight lg:text-6xl">{tenantSlug || 'MesaMagica'} Food Menu</p>
-          <p className="text-lg text-gray-700/80 mx-auto dark:text-neutral-300/80 max-w-2xl">Discover our carefully crafted menu featuring fresh ingredients and authentic flavors. Order your favorites and enjoy fast delivery.</p>
+          <p className="text-4xl font-bold leading-tight lg:text-6xl">{tenantSlug} Food Menu</p>
+          <p className="text-lg text-gray-700/80 mx-auto dark:text-neutral-300/80 max-w-2xl">
+            Discover our carefully crafted menu featuring fresh ingredients and authentic flavors. Order your favorites and enjoy fast delivery.
+          </p>
         </div>
       </div>
       <div className="lg:grid-cols-4 mb-16 grid gap-8">
@@ -178,7 +216,7 @@ const MainContent: React.FC = () => {
                 onAddToCart={() => handleAddToCart(item)}
                 onIncrement={() => handleIncrement(item.itemId)}
                 onDecrement={() => handleDecrement(item.itemId)}
-                quantity={cart.find((cartItem) => cartItem.menuItem.itemId === item.itemId)?.quantity || 1}
+                quantity={cart.find((cartItem) => cartItem.menuItem.itemId === item.itemId)?.quantity || 0} // Default to 0 if not in cart
               />
             ))}
           </div>

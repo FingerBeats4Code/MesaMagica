@@ -23,12 +23,16 @@ namespace MesaApi.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<CategoryResponse>> CreateCategory([FromBody] CreateCategoryRequest request)
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            //-----------------------------changes for tenant validation-----------------
+            // Removed manual slug check since TenantResolutionMiddleware will now set TenantKey
+            var tenantKey = _tenantContext.TenantKey;
+            if (string.IsNullOrEmpty(tenantKey))
+                return BadRequest("Tenant key is missing.");
+            //----------------------------------------------------------------------------
 
             try
             {
-                var category = await _categoryService.CreateCategoryAsync(request, User, _tenantContext.Slug);
+                var category = await _categoryService.CreateCategoryAsync(request, User, tenantKey);
                 return CreatedAtAction(nameof(GetCategory), new { id = category.CategoryId }, category);
             }
             catch (ArgumentException ex)
@@ -45,12 +49,15 @@ namespace MesaApi.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<CategoryResponse>> UpdateCategory(Guid id, [FromBody] UpdateCategoryRequest request)
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            //-----------------------------changes for tenant validation-----------------
+            var tenantKey = _tenantContext.TenantKey;
+            if (string.IsNullOrEmpty(tenantKey))
+                return BadRequest("Tenant key is missing.");
+            //----------------------------------------------------------------------------
 
             try
             {
-                var category = await _categoryService.UpdateCategoryAsync(id, request, User, _tenantContext.Slug);
+                var category = await _categoryService.UpdateCategoryAsync(id, request, User, tenantKey);
                 return Ok(category);
             }
             catch (ArgumentException ex)
@@ -67,12 +74,15 @@ namespace MesaApi.Controllers
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteCategory(Guid id)
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            //-----------------------------changes for tenant validation-----------------
+            var tenantKey = _tenantContext.TenantKey;
+            if (string.IsNullOrEmpty(tenantKey))
+                return BadRequest("Tenant key is missing.");
+            //----------------------------------------------------------------------------
 
             try
             {
-                await _categoryService.DeleteCategoryAsync(id, User, _tenantContext.Slug);
+                await _categoryService.DeleteCategoryAsync(id, User, tenantKey);
                 return NoContent();
             }
             catch (ArgumentException ex)
@@ -88,22 +98,28 @@ namespace MesaApi.Controllers
         [HttpGet]
         public async Task<ActionResult<List<CategoryResponse>>> GetCategories()
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            //-----------------------------changes for tenant validation-----------------
+            var tenantKey = _tenantContext.TenantKey;
+            if (string.IsNullOrEmpty(tenantKey))
+                return BadRequest("Tenant key is missing.");
+            //----------------------------------------------------------------------------
 
-            var categories = await _categoryService.GetCategoriesAsync(_tenantContext.Slug);
+            var categories = await _categoryService.GetCategoriesAsync(tenantKey);
             return Ok(categories);
         }
 
         [HttpGet("{id}")]
         public async Task<ActionResult<CategoryResponse>> GetCategory(Guid id)
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            //-----------------------------changes for tenant validation-----------------
+            var tenantKey = _tenantContext.TenantKey;
+            if (string.IsNullOrEmpty(tenantKey))
+                return BadRequest("Tenant key is missing.");
+            //----------------------------------------------------------------------------
 
             try
             {
-                var category = await _categoryService.GetCategoryAsync(id, _tenantContext.Slug);
+                var category = await _categoryService.GetCategoryAsync(id, tenantKey);
                 return Ok(category);
             }
             catch (ArgumentException ex)

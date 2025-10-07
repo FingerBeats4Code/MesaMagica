@@ -1,63 +1,57 @@
-import React, { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { startSession, getConfig } from '@/api/api';
+import React, { useEffect, useRef } from 'react';
 import { useAppContext } from '@/context/AppContext';
+import { useSearchParams } from 'react-router-dom';
+import { startSession } from '@/api/api';
 
-interface SessionInitializerProps {
-  children: React.ReactNode;
-}
-
-const SessionInitializer: React.FC<SessionInitializerProps> = ({ children }) => {
+const SessionInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { jwt, sessionId, setAuth } = useAppContext();
   const [searchParams] = useSearchParams();
-  const [isSessionReady, setIsSessionReady] = useState(false);
+  const tableId = searchParams.get('tableId') || 'default-table-id';
+  const isInitializing = useRef(false);
 
   useEffect(() => {
+    // Load stored sessions from localStorage
+    const storedSessions = JSON.parse(localStorage.getItem('sessions') || '{}');
+    const storedSession = storedSessions[tableId];
+
+    // Use existing session if available for this tableId
+    if (storedSession && storedSession.jwt && storedSession.sessionId && storedSession.sessionId === sessionId && storedSession.jwt === jwt) {
+      console.log(`[${new Date().toISOString()}] Reusing existing session for tableId: ${tableId}, sessionId: ${storedSession.sessionId}`);
+      return;
+    }
+
+    // Prevent multiple initializations
+    if (isInitializing.current) {
+      console.log(`[${new Date().toISOString()}] Session initialization already in progress for tableId: ${tableId}`);
+      return;
+    }
+
+    isInitializing.current = true;
+
     const initializeSession = async () => {
-      if (jwt && sessionId) {
-        setIsSessionReady(true);
-        return;
-      }
-
       try {
-        const tenantSlug = searchParams.get('tenantSlug') || import.meta.env.VITE_TENANT_SLUG || '';
-        const tableId = searchParams.get('tableId') || 'default-table-id';
-        const qrCodeUrl = window.location.href;
-
-        if (!tenantSlug || !tableId || !qrCodeUrl) {
-          console.error('Missing session initialization parameters');
-          setIsSessionReady(true);
-          return;
-        }
-
-        // Fetch tenant key from GetCofig
-        let tenantKey = import.meta.env.VITE_TENANT_API_KEY || '';
-        try {
-          const configResponse = await getConfig(tenantSlug);
-          if (configResponse.tenantKey) {
-            tenantKey = configResponse.tenantKey;
-          }
-        } catch (error) {
-          console.error('Failed to fetch tenant key, using fallback:', error);
-        }
-
-        const sessionResponse = await startSession(qrCodeUrl, tenantSlug, tenantKey, tableId);
-        if (sessionResponse.jwt && sessionResponse.sessionId) {
-          setAuth(sessionResponse.jwt, sessionResponse.sessionId, tenantSlug, tableId, tenantKey);
-        }
-        setIsSessionReady(true);
+        console.log(`[${new Date().toISOString()}] Starting new session for tableId: ${tableId}`);
+        const response = await startSession({
+          tableId,
+          qrCodeUrl: window.location.href,
+        });
+        // Store the new session
+        setAuth(response.jwt, response.sessionId);
+        storedSessions[tableId] = { jwt: response.jwt, sessionId: response.sessionId };
+        localStorage.setItem('sessions', JSON.stringify(storedSessions));
       } catch (error) {
-        console.error('Failed to initialize session:', error);
-        setIsSessionReady(true); // Proceed to avoid blocking
+        console.error(`[${new Date().toISOString()}] Failed to start session for tableId: ${tableId}`, error);
+      } finally {
+        isInitializing.current = false;
       }
     };
 
     initializeSession();
-  }, [jwt, sessionId, searchParams, setAuth]);
 
-  if (!isSessionReady) {
-    return <div>Loading...</div>;
-  }
+    return () => {
+      isInitializing.current = false; // Reset on cleanup
+    };
+  }, [tableId, setAuth, jwt, sessionId]);
 
   return <>{children}</>;
 };

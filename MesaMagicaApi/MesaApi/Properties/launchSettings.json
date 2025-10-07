@@ -9,12 +9,12 @@
       "applicationUrl": "http://*:80"
     },
     "https": {
-      "commandName": "Project",
-      "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
-      },
-      "dotnetRunMessages": true,
-      "applicationUrl": "http://*:80;https://*:443"
+        "commandName": "Project",
+        "environmentVariables": {
+            "ASPNETCORE_ENVIRONMENT": "Development"
+        },
+        "dotnetRunMessages": true,
+        "applicationUrl": "http://localhost:5204;https://localhost:7204" //"http://*:80;https://*:443"
     },
     "Container (Dockerfile)": {
       "commandName": "Docker",

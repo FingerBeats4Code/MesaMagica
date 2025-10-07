@@ -186,6 +186,9 @@ namespace MesaApi.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<int>("TableSeatSize")
+                        .HasColumnType("integer");
+
                     b.HasKey("TableId");
 
                     b.HasIndex("TableNumber")
@@ -205,6 +208,9 @@ namespace MesaApi.Migrations
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
+
+                    b.Property<int>("SessionCount")
+                        .HasColumnType("integer");
 
                     b.Property<Guid>("SessionToken")
                         .HasColumnType("uuid");
