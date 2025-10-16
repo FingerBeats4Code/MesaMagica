@@ -3,20 +3,17 @@ using System;
 using MesaMagica.Api.Catalog;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace MesaApi.Migrations.Catalog
+namespace MesaApi.Migrations
 {
     [DbContext(typeof(CatalogDbContext))]
-    [Migration("20250830203844_AddTenantKeyAndLicense")]
-    partial class AddTenantKeyAndLicense
+    partial class CatalogDbContextModelSnapshot : ModelSnapshot
     {
-        /// <inheritdoc />
-        protected override void BuildTargetModel(ModelBuilder modelBuilder)
+        protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

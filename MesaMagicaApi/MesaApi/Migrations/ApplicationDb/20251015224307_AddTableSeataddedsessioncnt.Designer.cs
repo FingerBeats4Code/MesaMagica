@@ -9,11 +9,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace MesaApi.Migrations
+namespace MesaApi.Migrations.ApplicationDb
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20251006210439_AddTableSeatSizeColumnadd")]
-    partial class AddTableSeatSizeColumnadd
+    [Migration("20251015224307_AddTableSeataddedsessioncnt")]
+    partial class AddTableSeataddedsessioncnt
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -211,6 +211,9 @@ namespace MesaApi.Migrations
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
+
+                    b.Property<int>("SessionCount")
+                        .HasColumnType("integer");
 
                     b.Property<Guid>("SessionToken")
                         .HasColumnType("uuid");

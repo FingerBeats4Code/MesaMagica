@@ -4,10 +4,10 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace MesaApi.Migrations
+namespace MesaApi.Migrations.ApplicationDb
 {
     /// <inheritdoc />
-    public partial class AddTableSeatSizeColumndel : Migration
+    public partial class AddTableSeataddedsessioncnt : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -36,7 +36,7 @@ namespace MesaApi.Migrations
                     QRCodeUrl = table.Column<string>(type: "text", nullable: false),
                     IsOccupied = table.Column<bool>(type: "boolean", nullable: false),
                     CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    TableSize = table.Column<int>(type: "integer", nullable: false)
+                    TableSeatSize = table.Column<int>(type: "integer", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -102,7 +102,8 @@ namespace MesaApi.Migrations
                     SessionToken = table.Column<Guid>(type: "uuid", nullable: false),
                     IsActive = table.Column<bool>(type: "boolean", nullable: false),
                     StartedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    EndedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
+                    EndedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    SessionCount = table.Column<int>(type: "integer", nullable: false)
                 },
                 constraints: table =>
                 {

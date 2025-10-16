@@ -4,7 +4,7 @@ import Menu from "@/components/Menu";
 import Cart from "@/components/Cart";
 import Order from "@/components/Order";
 import { useSearchParams } from 'react-router-dom';
-import { getCategories, getMenuItems, submitOrder, addToCartBackend, removeFromCartBackend, getCart, Category, MenuItemResponse, CartItem, OrderResponse } from "@/api/api";
+import { getCategories, getMenuItems, submitOrder, addToCartBackend, removeFromCartBackend, getCart, Category, MenuItemResponse, CartItem } from "@/api/api";
 
 interface FoodCardProps {
   name: string;
@@ -17,7 +17,7 @@ interface FoodCardProps {
   quantity?: number;
 }
 
-const FoodCard: React.FC<FoodCardProps> = ({ name, price, description, imageSrc, onAddToCart, onIncrement, onDecrement, quantity = 1 }) => {
+const FoodCard: React.FC<FoodCardProps> = ({ name, price, description, imageSrc, onAddToCart, onIncrement, onDecrement, quantity = 0 }) => {
   return (
     <div className="bg-white/70 dark:bg-neutral-900/50 rounded-xl border border-zinc-300/70 dark:border-white/20 overflow-hidden hover:shadow-lg transition-shadow">
       <img alt={name} src={imageSrc} className="object-cover w-full h-48" />
@@ -31,13 +31,13 @@ const FoodCard: React.FC<FoodCardProps> = ({ name, price, description, imageSrc,
           <div className="items-center flex gap-2">
             <button
               type="button"
-              className="border border-zinc-300/70 dark:border-white/20 flex hover:bg-neutral-100 dark:hover:bg-neutral-800 w-8 h-8 rounded-full items-center justify-center"
+              className="border border-zinc-300/70 dark:border-white/20 flex hover:bg-neutral-100 dark:hover:bg-neutral-800 w-8 h-8 rounded-full items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={onDecrement}
-              disabled={quantity <= 0} // Allow decrement until quantity is 0
+              disabled={quantity <= 0}
             >
               -
             </button>
-            <span className="font-medium">{quantity}</span>
+            <span className="font-medium w-8 text-center">{quantity}</span>
             <button
               type="button"
               className="border border-zinc-300/70 dark:border-white/20 flex hover:bg-neutral-100 dark:hover:bg-neutral-800 w-8 h-8 rounded-full items-center justify-center"
@@ -62,42 +62,67 @@ const FoodCard: React.FC<FoodCardProps> = ({ name, price, description, imageSrc,
 const MainContent: React.FC = () => {
   const [searchParams] = useSearchParams();
   const tableId = searchParams.get('tableId') || 'default-table-id';
-  const hostname = window.location.hostname;
-  const tenantSlug = hostname.includes('.') ? hostname.split('.')[1] : 'MesaMagica';
   const [categories, setCategories] = useState<Category[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItemResponse[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const { jwt, sessionId } = useAppContext();
+  const { jwt, sessionId, tenantSlug } = useAppContext();
 
-  // Fetch categories, menu items, and cart on mount or when selectedCategory changes
+  // Reset state when tableId changes
   useEffect(() => {
-    const fetchInitialData = async () => {
-      if (!jwt || !sessionId) return;
+    console.log(`[${new Date().toISOString()}] TableId changed to: ${tableId} - resetting state`);
+    setCategories([]);
+    setMenuItems([]);
+    setCart([]);
+    setSelectedCategory(null);
+    setLoading(true);
+    setError(null);
+  }, [tableId]);
 
+  // Fetch initial data when session is ready
+  useEffect(() => {
+    if (!jwt || !sessionId) {
+      console.log(`[${new Date().toISOString()}] Waiting for session initialization...`);
+      return;
+    }
+
+    const fetchInitialData = async () => {
+      setLoading(true);
+      setError(null);
+      
       console.log(`[${new Date().toISOString()}] Fetching initial data for tenant: ${tenantSlug}, tableId: ${tableId}, sessionId: ${sessionId}`);
+      
       try {
-        const cats = await getCategories();
+        const [cats, items, cartData] = await Promise.all([
+          getCategories(),
+          getMenuItems(selectedCategory ?? undefined),
+          getCart(sessionId)
+        ]);
+        
         setCategories(cats);
-        const items = await getMenuItems(selectedCategory ?? undefined);
         setMenuItems(items);
-        const cartData = await getCart(sessionId);
         setCart(cartData);
+        
+        console.log(`[${new Date().toISOString()}] ✅ Data loaded - Categories: ${cats.length}, Items: ${items.length}, Cart items: ${cartData.length}`);
       } catch (error) {
         console.error('Failed to fetch initial data:', error);
+        setError('Failed to load menu. Please try refreshing the page.');
+      } finally {
+        setLoading(false);
       }
     };
 
     fetchInitialData();
-  }, [jwt, sessionId, selectedCategory]);
+  }, [jwt, sessionId, selectedCategory, tenantSlug, tableId]);
 
-  // Poll for cart updates only when cart is non-empty
+  // Poll for cart updates when cart has items
   useEffect(() => {
     if (!jwt || !sessionId || cart.length === 0) return;
 
     const fetchCart = async () => {
-      console.log(`[${new Date().toISOString()}] Polling cart for tenant: ${tenantSlug}, tableId: ${tableId}, sessionId: ${sessionId}`);
       try {
         const cartData = await getCart(sessionId);
         setCart(cartData);
@@ -170,6 +195,53 @@ const MainContent: React.FC = () => {
     }
   };
 
+  // Show loading state while initializing
+  if (!jwt || !sessionId) {
+    return (
+      <main className="mx-auto px-8 relative z-20 max-w-7xl">
+        <div className="text-center py-16">
+          <div className="inline-flex items-center gap-3 px-6 py-4 rounded-xl bg-white/70 dark:bg-neutral-900/50 border border-zinc-300/70 dark:border-white/20">
+            <div className="w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+            <span className="text-lg">Initializing your session...</span>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // Show loading state while fetching data
+  if (loading) {
+    return (
+      <main className="mx-auto px-8 relative z-20 max-w-7xl">
+        <div className="text-center py-16">
+          <div className="inline-flex items-center gap-3 px-6 py-4 rounded-xl bg-white/70 dark:bg-neutral-900/50 border border-zinc-300/70 dark:border-white/20">
+            <div className="w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+            <span className="text-lg">Loading menu...</span>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <main className="mx-auto px-8 relative z-20 max-w-7xl">
+        <div className="text-center py-16">
+          <div className="px-6 py-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+            <p className="text-lg text-red-600 dark:text-red-400">{error}</p>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+            >
+              Refresh Page
+            </button>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="mx-auto px-8 relative z-20 max-w-7xl">
       <div className="text-center py-16">
@@ -184,6 +256,7 @@ const MainContent: React.FC = () => {
           </p>
         </div>
       </div>
+      
       <div className="lg:grid-cols-4 mb-16 grid gap-8">
         <div className="lg:col-span-1">
           <div className="sticky top-8">
@@ -204,22 +277,29 @@ const MainContent: React.FC = () => {
             />
           </div>
         </div>
+        
         <div className="lg:col-span-3">
-          <div className="md:grid-cols-2 grid gap-6">
-            {menuItems.map((item) => (
-              <FoodCard
-                key={item.itemId}
-                name={item.name || 'Unnamed Item'}
-                price={`$${item.price.toFixed(2)}`}
-                description={item.description || 'No description available'}
-                imageSrc={item.imageUrl || 'https://placehold.co/400x240/cccccc/ffffff?text=No+Image'}
-                onAddToCart={() => handleAddToCart(item)}
-                onIncrement={() => handleIncrement(item.itemId)}
-                onDecrement={() => handleDecrement(item.itemId)}
-                quantity={cart.find((cartItem) => cartItem.menuItem.itemId === item.itemId)?.quantity || 0} // Default to 0 if not in cart
-              />
-            ))}
-          </div>
+          {menuItems.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-lg text-gray-600 dark:text-neutral-400">No menu items available</p>
+            </div>
+          ) : (
+            <div className="md:grid-cols-2 grid gap-6">
+              {menuItems.map((item) => (
+                <FoodCard
+                  key={item.itemId}
+                  name={item.name || 'Unnamed Item'}
+                  price={`$${item.price.toFixed(2)}`}
+                  description={item.description || 'No description available'}
+                  imageSrc={item.imageUrl || 'https://placehold.co/400x240/cccccc/ffffff?text=No+Image'}
+                  onAddToCart={() => handleAddToCart(item)}
+                  onIncrement={() => handleIncrement(item.itemId)}
+                  onDecrement={() => handleDecrement(item.itemId)}
+                  quantity={cart.find((cartItem) => cartItem.menuItem.itemId === item.itemId)?.quantity || 0}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </main>
