@@ -2,6 +2,7 @@ using MesaApi.Multitenancy;
 using MesaApi.Services;
 using MesaMagica.Api.Catalog;
 using MesaMagica.Api.Extensions;
+using MesaMagica.Api.Middleware; // ADD THIS
 using MesaMagica.Api.Multitenancy;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -14,15 +15,12 @@ builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.SetMinimumLevel(LogLevel.Debug);
 
-// Add services to the container.
+// Add services to the container
 builder.Services.AddEndpointsApiExplorer();
-
-//-----------------------------changes for swagger security---------------
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "MesaMagica API", Version = "v1" });
 
-    // Only JWT now
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Name = "Authorization",
@@ -42,10 +40,9 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-
-builder.WebHost.UseUrls("http://*:80"); // mandatory inside container
+builder.WebHost.UseUrls("http://*:80");
 builder.Services.AddControllers();
-//var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
+
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
 builder.Services.AddCors(options =>
 {
@@ -63,26 +60,24 @@ builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"))
 // Register IHttpContextAccessor
 builder.Services.AddHttpContextAccessor();
 
-// Register CatalogDbContext (global catalog)
+// Register CatalogDbContext
 builder.Services.AddDbContext<CatalogDbContext>(opt =>
     opt.UseNpgsql(builder.Configuration.GetConnectionString("CatalogConnection"))
        .EnableSensitiveDataLogging()
        .EnableDetailedErrors());
 
-// Register ITenantContext with factory
+// Register ITenantContext
 builder.Services.AddScoped<ITenantContext>(sp =>
 {
     var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
     var httpContext = httpContextAccessor.HttpContext;
 
-    // If middleware has resolved tenant
     if (httpContext?.Items["TenantContext"] is TenantContext tenantContext && tenantContext.HasTenant)
     {
         return tenantContext;
     }
 
-    // Fallback tenant for non-HTTP contexts (e.g., migrations)
-    var fallbackConnectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+    var fallbackConnectionString = builder.Configuration.GetConnectionString("TenantConnection");
     if (string.IsNullOrWhiteSpace(fallbackConnectionString))
     {
         throw new InvalidOperationException("Fallback tenant connection string is not configured.");
@@ -121,22 +116,25 @@ builder.Services.AddAuthentication(o =>
         ValidIssuer = jwt["Issuer"],
         ValidAudience = jwt["Audience"],
         IssuerSigningKey = new SymmetricSecurityKey(key)
-
     };
 });
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
 app.UseCors("AllowConfiguredOrigins");
 app.UseHttpsRedirection();
 app.UseRouting();
-app.UseCors("AllowReactApp");
+
+// ADD GLOBAL EXCEPTION HANDLER - MUST BE BEFORE AUTHENTICATION
+app.UseGlobalExceptionHandler();
+
 app.UseTenantResolution();
 app.UseAuthentication();
 app.UseAuthorization();

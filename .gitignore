@@ -1,37 +1,87 @@
 # .NET Core
-/MesaMagicaApi/MesaApi/bin/
-/MesaMagicaApi/MesaApi/obj/
-/MesaMagicaApi/MesaApi/.vs/
-*.csproj.user
-*.sln.user
+bin/
+obj/
+*.user
 *.suo
 *.cache
 *.log
-*.sqlite
-*.db
 
-# React/Node.js
-/mesamagicafrontend/node_modules/
-/mesamagicafrontend/build/
-/mesamagicafrontend/.env
-/mesamagicafrontend/.env.local
-/mesamagicafrontend/.env.development.local
-/mesamagicafrontend/.env.test.local
-/mesamagicafrontend/.env.production.local
-npm-debug.log*
-yarn-error.log*
-
-# Docker (remove these if you want to commit Docker files)
-*.dockerignore
-/docker-compose.yml
-/docker-compose.*.yml
-
-# IDEs
+# Visual Studio
+.vs/
 .vscode/
-.idea/
-*.swp
-*.swo
+*.userprefs
 
-# OS-specific
+# Rider
+.idea/
+
+# CRITICAL: Never commit these files with secrets
+**/appsettings.Development.json
+**/appsettings.json
+**/secrets.json
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+logs/
+*.log
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Package files
+*.nupkg
+*.snupkg
+
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio profiler
+*.psess
+*.vsp
+*.vspx
+*.sap
+
+# ReSharper
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# NuGet
+*.nuget.props
+*.nuget.targets
+packages/
+
+# MSTest
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+
+# NUnit
+*.VisualState.xml
+TestResult.xml
+nunit-*.xml
