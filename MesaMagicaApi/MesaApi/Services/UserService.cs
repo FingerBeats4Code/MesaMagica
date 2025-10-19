@@ -1,49 +1,27 @@
 ﻿using BCrypt.Net;
+using MesaApi.Common;
 using MesaApi.Models;
 using MesaApi.Multitenancy;
 using MesaMagica.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
-namespace MesaApi.Services  
+namespace MesaApi.Services
 {
-
-    public class UsersService : IUsersService
+    //------------------changes for using base service and consistent tenant validation----------------------
+    public class UsersService : TenantAwareService, IUsersService
     {
-        private readonly ApplicationDbContext _dbContext;
-        private readonly ITenantContext _tenantContext;
-        private readonly ILogger<UsersService> _logger;
-
-        public UsersService(ApplicationDbContext dbContext, ITenantContext tenantContext, ILogger<UsersService> logger)
+        public UsersService(
+            ApplicationDbContext dbContext,
+            ITenantContext tenantContext,
+            ILogger<UsersService> logger)
+            : base(dbContext, tenantContext, logger)
         {
-            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
-            _tenantContext = tenantContext ?? throw new ArgumentNullException(nameof(tenantContext));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        }
-
-        private async Task ValidateAdminUserAsync(ClaimsPrincipal user, string tenantSlug)
-        {
-            if (!user.IsInRole("Admin"))
-                throw new UnauthorizedAccessException("User is not authorized to perform this action.");
-
-            var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
-                throw new UnauthorizedAccessException("Invalid user ID in token.");
-
-            var dbUser = await _dbContext.Users
-                .FirstOrDefaultAsync(u => u.UserId == userId && u.Role == "Admin" && u.IsActive);
-            if (dbUser == null)
-                throw new UnauthorizedAccessException("User is not an active admin in the database.");
-
-            var userTenantSlug = user.FindFirst("tenantSlug")?.Value;
-            if (string.IsNullOrEmpty(userTenantSlug) || userTenantSlug != tenantSlug)
-                throw new UnauthorizedAccessException("Tenant mismatch in request.");
         }
 
         public async Task<UserResponse> CreateUserAsync(CreateUserRequest request, ClaimsPrincipal user, string tenantSlug)
         {
-            await ValidateAdminUserAsync(user, tenantSlug);
-            var adminId = Guid.Parse(user.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            var adminId = await ValidateAdminAndGetUserIdAsync(user, tenantSlug);
 
             if (await _dbContext.Users.AnyAsync(u => u.Username == request.Username))
                 throw new ArgumentException("Username already exists.");
@@ -66,16 +44,15 @@ namespace MesaApi.Services
             _dbContext.Users.Add(newUser);
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation("User created. UserId: {UserId}, Username: {Username}, TenantSlug: {TenantSlug}", newUser.UserId, newUser.Username, tenantSlug);
-            _logger.LogInformation("Email notification sent to {Email} for user creation", newUser.Email);
+            _logger.LogInformation("User created. UserId: {UserId}, Username: {Username}, TenantSlug: {TenantSlug}",
+                newUser.UserId, newUser.Username, tenantSlug);
 
             return MapToUserResponse(newUser);
         }
 
         public async Task<UserResponse> UpdateUserAsync(Guid userId, UpdateUserRequest request, ClaimsPrincipal user, string tenantSlug)
         {
-            await ValidateAdminUserAsync(user, tenantSlug);
-            var adminId = Guid.Parse(user.FindFirst(ClaimTypes.NameIdentifier)!.Value);
+            var adminId = await ValidateAdminAndGetUserIdAsync(user, tenantSlug);
 
             var existingUser = await _dbContext.Users
                 .FirstOrDefaultAsync(u => u.UserId == userId);
@@ -98,22 +75,22 @@ namespace MesaApi.Services
 
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation("User updated. UserId: {UserId}, Username: {Username}, TenantSlug: {TenantSlug}", userId, request.Username, tenantSlug);
-            _logger.LogInformation("Email notification sent to {Email} for user update", request.Email);
+            _logger.LogInformation("User updated. UserId: {UserId}, Username: {Username}, TenantSlug: {TenantSlug}",
+                userId, request.Username, tenantSlug);
 
             return MapToUserResponse(existingUser);
         }
 
         public async Task DeleteUserAsync(Guid userId, ClaimsPrincipal user, string tenantSlug)
         {
-            await ValidateAdminUserAsync(user, tenantSlug);
+            var adminId = await ValidateAdminAndGetUserIdAsync(user, tenantSlug);
 
             var existingUser = await _dbContext.Users
                 .FirstOrDefaultAsync(u => u.UserId == userId);
             if (existingUser == null)
                 throw new ArgumentException("User not found.");
 
-            if (existingUser.UserId == Guid.Parse(user.FindFirst(ClaimTypes.NameIdentifier)!.Value))
+            if (existingUser.UserId == adminId)
                 throw new ArgumentException("Cannot delete your own account.");
 
             _dbContext.Users.Remove(existingUser);
@@ -124,7 +101,7 @@ namespace MesaApi.Services
 
         public async Task<List<UserResponse>> GetUsersAsync(ClaimsPrincipal user, string tenantSlug)
         {
-            await ValidateAdminUserAsync(user, tenantSlug);
+            await ValidateAdminAndGetUserIdAsync(user, tenantSlug);
 
             var users = await _dbContext.Users
                 .Select(u => MapToUserResponse(u))
@@ -135,7 +112,7 @@ namespace MesaApi.Services
 
         public async Task<UserResponse> GetUserAsync(Guid userId, ClaimsPrincipal user, string tenantSlug)
         {
-            await ValidateAdminUserAsync(user, tenantSlug);
+            await ValidateAdminAndGetUserIdAsync(user, tenantSlug);
 
             var existingUser = await _dbContext.Users
                 .FirstOrDefaultAsync(u => u.UserId == userId);
@@ -162,4 +139,5 @@ namespace MesaApi.Services
             };
         }
     }
+    //------------------end changes----------------------
 }

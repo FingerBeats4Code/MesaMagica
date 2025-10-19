@@ -32,4 +32,8 @@ public class MemoryRedisService : IRedisService
         _cache.TryRemove(key, out _);
         return Task.CompletedTask;
     }
+
+    //------------------changes for provider identification----------------------
+    public string GetProviderName() => "InMemory";
+    //------------------end changes----------------------
 }

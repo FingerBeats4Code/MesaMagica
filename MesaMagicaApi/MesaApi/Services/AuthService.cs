@@ -1,4 +1,5 @@
-﻿using MesaApi.Models;
+﻿using MesaApi.Common;
+using MesaApi.Models;
 using MesaApi.Multitenancy;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -15,7 +16,11 @@ public class AuthService : IAuthService
     private readonly IConfiguration _configuration;
     private readonly ILogger<AuthService> _logger;
 
-    public AuthService(ApplicationDbContext dbContext, ITenantContext tenantContext, IConfiguration configuration, ILogger<AuthService> logger)
+    public AuthService(
+        ApplicationDbContext dbContext,
+        ITenantContext tenantContext,
+        IConfiguration configuration,
+        ILogger<AuthService> logger)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _tenantContext = tenantContext ?? throw new ArgumentNullException(nameof(tenantContext));
@@ -32,14 +37,17 @@ public class AuthService : IAuthService
             .FirstOrDefaultAsync(u => u.Username == request.Username);
         if (user == null)
         {
-            _logger.LogWarning("Login failed: User {Username} not found for tenant {TenantSlug}", request.Username, tenantSlug);
+            _logger.LogWarning("Login failed: User {Username} not found for tenant {TenantSlug}",
+                request.Username, tenantSlug);
             throw new UnauthorizedAccessException("Invalid username or password.");
         }
 
         if (user.LockedUntil.HasValue && user.LockedUntil > DateTime.UtcNow)
         {
-            _logger.LogWarning("Login failed: User {Username} is locked until {LockedUntil}", request.Username, user.LockedUntil);
-            throw new UnauthorizedAccessException($"Account is locked until {user.LockedUntil.Value.ToString("o")}.");
+            _logger.LogWarning("Login failed: User {Username} is locked until {LockedUntil}",
+                request.Username, user.LockedUntil);
+            throw new UnauthorizedAccessException(
+                $"Account is locked until {user.LockedUntil.Value.ToString("o")}.");
         }
 
         if (!BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
@@ -48,7 +56,8 @@ public class AuthService : IAuthService
             if (user.FailedLoginAttempts >= 5)
                 user.LockedUntil = DateTime.UtcNow.AddMinutes(15);
             await _dbContext.SaveChangesAsync();
-            _logger.LogWarning("Login failed: Invalid password for user {Username}. Attempts: {Attempts}", request.Username, user.FailedLoginAttempts);
+            _logger.LogWarning("Login failed: Invalid password for user {Username}. Attempts: {Attempts}",
+                request.Username, user.FailedLoginAttempts);
             throw new UnauthorizedAccessException("Invalid username or password.");
         }
 
@@ -62,7 +71,8 @@ public class AuthService : IAuthService
         await _dbContext.SaveChangesAsync();
 
         var token = GenerateJwtToken(user, tenantSlug);
-        _logger.LogInformation("User {Username} logged in successfully for tenant {TenantSlug}", request.Username, tenantSlug);
+        _logger.LogInformation("User {Username} logged in successfully for tenant {TenantSlug}",
+            request.Username, tenantSlug);
 
         return new LoginResponse
         {
@@ -86,9 +96,11 @@ public class AuthService : IAuthService
         if (user == null)
             throw new UnauthorizedAccessException("User not found or inactive.");
 
-        var userTenantSlug = userPrincipal.FindFirst("tenantSlug")?.Value;
+        //------------------changes for consistent tenant validation from JWT----------------------
+        var userTenantSlug = userPrincipal.FindFirst(JwtClaims.TenantSlug)?.Value;
         if (userTenantSlug != tenantSlug)
             throw new UnauthorizedAccessException("Tenant mismatch in request.");
+        //------------------end changes----------------------
 
         if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
         {
@@ -104,20 +116,20 @@ public class AuthService : IAuthService
         await _dbContext.SaveChangesAsync();
 
         _logger.LogInformation("Password changed for user {UserId} in tenant {TenantSlug}", userId, tenantSlug);
-        // Placeholder: Log email notification
-        _logger.LogInformation("Email notification sent to {Email} for password change", user.Email);
     }
 
+    //------------------changes for using constants instead of magic strings----------------------
     private string GenerateJwtToken(User user, string tenantSlug)
     {
         var claims = new[]
         {
-                new Claim(JwtRegisteredClaimNames.Sub, user.Username),
-                new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
-                new Claim(ClaimTypes.Role, user.Role),
-                new Claim("tenantSlug", tenantSlug),
-                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-            };
+            new Claim(JwtRegisteredClaimNames.Sub, user.Username),
+            new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
+            new Claim(ClaimTypes.Role, user.Role),
+            new Claim(JwtClaims.TenantSlug, tenantSlug),
+            new Claim(JwtClaims.TenantKey, _tenantContext.TenantKey),
+            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+        };
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -126,9 +138,10 @@ public class AuthService : IAuthService
             issuer: _configuration["Jwt:Issuer"],
             audience: _configuration["Jwt:Audience"],
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(12),
+            expires: DateTime.UtcNow.AddHours(2), // Reduced from 12 hours
             signingCredentials: creds);
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
+    //------------------end changes----------------------
 }

@@ -291,8 +291,9 @@ api.interceptors.response.use(
     // Handle 400 Bad Request
     if (status === 400) {
       console.error(`[${timestamp}] ⚠️ 400 Bad Request:`, error.response.data);
+      const errorData = error.response.data as { message?: string };
       return Promise.reject({
-        message: error.response.data?.message || 'Invalid request.',
+        message: errorData?.message || 'Invalid request.',
         status: 400,
         error,
       });
@@ -320,7 +321,7 @@ export const startSession = async (payload: StartSessionRequest): Promise<Sessio
 // 🟢 Get menu items
 export const getMenuItems = async (categoryId?: string): Promise<MenuItemResponse[]> => {
   try {
-    const url = categoryId ? `/api/menu/items?categoryId=${categoryId}` : '/api/menu/items';
+    const url = categoryId ? `api/menu/categories/${categoryId}/items` : '/api/menu/items';
     console.log(`[${new Date().toISOString()}] 📋 Fetching menu items from: ${url}`);
     const response = await api.get(url);
     return response.data;

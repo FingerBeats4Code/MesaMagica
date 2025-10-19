@@ -2,7 +2,7 @@ using MesaApi.Multitenancy;
 using MesaApi.Services;
 using MesaMagica.Api.Catalog;
 using MesaMagica.Api.Extensions;
-using MesaMagica.Api.Middleware; // ADD THIS
+using MesaMagica.Api.Middleware;
 using MesaMagica.Api.Multitenancy;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
@@ -15,7 +15,6 @@ builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.SetMinimumLevel(LogLevel.Debug);
 
-// Add services to the container
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -43,30 +42,68 @@ builder.Services.AddSwaggerGen(c =>
 builder.WebHost.UseUrls("http://*:80");
 builder.Services.AddControllers();
 
+//------------------changes for fixing CORS configuration----------------------
 var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+var allowedDomains = builder.Configuration.GetSection("Cors:AllowedDomains").Get<string[]>() ?? Array.Empty<string>();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowConfiguredOrigins", policy =>
     {
-        policy.WithOrigins(allowedOrigins)
-              .AllowAnyHeader()
-              .AllowAnyMethod();
+        policy.SetIsOriginAllowed(origin =>
+        {
+            try
+            {
+                var uri = new Uri(origin);
+
+                // Allow exact matches from config
+                if (allowedOrigins.Contains(origin))
+                    return true;
+
+                // Allow subdomains of configured domains
+                foreach (var domain in allowedDomains)
+                {
+                    if (uri.Host.EndsWith(domain, StringComparison.OrdinalIgnoreCase) ||
+                        uri.Host.Equals(domain, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+
+                // Allow localhost in development
+                if (builder.Environment.IsDevelopment() && uri.Host == "localhost")
+                    return true;
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        })
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials();
     });
 });
+//------------------end changes----------------------
 
-// Configure JWT settings
-builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
+//------------------changes for reduced JWT expiry time----------------------
+builder.Services.Configure<JwtSettings>(options =>
+{
+    var jwtSection = builder.Configuration.GetSection("Jwt");
+    options.Key = jwtSection["Key"]!;
+    options.Issuer = jwtSection["Issuer"]!;
+    options.Audience = jwtSection["Audience"]!;
+    options.ExpiryMinutes = 60; // Reduced from 240 to 60 minutes for sessions
+});
+//------------------end changes----------------------
 
-// Register IHttpContextAccessor
 builder.Services.AddHttpContextAccessor();
 
-// Register CatalogDbContext
 builder.Services.AddDbContext<CatalogDbContext>(opt =>
     opt.UseNpgsql(builder.Configuration.GetConnectionString("CatalogConnection"))
-       .EnableSensitiveDataLogging()
-       .EnableDetailedErrors());
+       .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
+       .EnableDetailedErrors(builder.Environment.IsDevelopment()));
 
-// Register ITenantContext
 builder.Services.AddScoped<ITenantContext>(sp =>
 {
     var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
@@ -95,7 +132,6 @@ builder.Services.AddScoped<ITenantContext>(sp =>
 
 builder.Services.AddMesaMagicaServices(builder.Configuration);
 
-// Configure JWT authentication
 var jwt = builder.Configuration.GetSection("Jwt");
 var key = Encoding.UTF8.GetBytes(jwt["Key"]!);
 
@@ -115,13 +151,15 @@ builder.Services.AddAuthentication(o =>
         ValidateIssuerSigningKey = true,
         ValidIssuer = jwt["Issuer"],
         ValidAudience = jwt["Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(key)
+        IssuerSigningKey = new SymmetricSecurityKey(key),
+        //------------------changes for clock skew----------------------
+        ClockSkew = TimeSpan.Zero // Remove default 5 minute grace period
+        //------------------end changes----------------------
     };
 });
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -132,7 +170,6 @@ app.UseCors("AllowConfiguredOrigins");
 app.UseHttpsRedirection();
 app.UseRouting();
 
-// ADD GLOBAL EXCEPTION HANDLER - MUST BE BEFORE AUTHENTICATION
 app.UseGlobalExceptionHandler();
 
 app.UseTenantResolution();

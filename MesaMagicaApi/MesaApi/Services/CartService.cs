@@ -1,4 +1,5 @@
-﻿using MesaApi.Models;
+﻿using MesaApi.Common;
+using MesaApi.Models;
 using MesaApi.Services;
 using MesaMagica.Api.Data;
 using Microsoft.EntityFrameworkCore;
@@ -32,7 +33,6 @@ namespace MesaMagicaApi.Services
 
             try
             {
-                // Try Redis cache first
                 var cachedCart = await _redisService.GetAsync(cacheKey);
                 if (!string.IsNullOrEmpty(cachedCart))
                 {
@@ -40,7 +40,6 @@ namespace MesaMagicaApi.Services
                     if (cartDtos != null && cartDtos.Any())
                     {
                         _logger.LogDebug("Cart retrieved from cache for SessionId: {SessionId}", sessionId);
-                        // Convert DTOs back to entities (for backward compatibility)
                         return await ConvertDtosToEntities(cartDtos);
                     }
                 }
@@ -50,14 +49,12 @@ namespace MesaMagicaApi.Services
                 _logger.LogWarning(ex, "Failed to retrieve cart from cache for SessionId: {SessionId}", sessionId);
             }
 
-            // Fetch from Postgres
             var cart = await _context.CartItems
                 .Where(c => c.SessionId == sessionId && c.Quantity > 0)
                 .Include(c => c.MenuItem)
                     .ThenInclude(m => m.Category)
                 .ToListAsync();
 
-            // Cache using DTOs
             if (cart.Any())
             {
                 var cartDtos = cart.Select(c => new CartItemDto
@@ -87,8 +84,12 @@ namespace MesaMagicaApi.Services
             return cart;
         }
 
+        //------------------changes for supporting increment and decrement via quantity parameter----------------------
         public async Task AddToCartAsync(Guid sessionId, Guid itemId, int quantity)
         {
+            if (quantity == 0)
+                throw new ArgumentException("Quantity cannot be zero.");
+
             var cacheKey = $"cart_{sessionId}";
 
             var menuItem = await _context.MenuItems
@@ -110,13 +111,15 @@ namespace MesaMagicaApi.Services
 
             if (existingItem != null)
             {
+                // Update existing item quantity
                 existingItem.Quantity += quantity;
                 existingItem.AddedAt = DateTime.UtcNow;
 
                 if (existingItem.Quantity <= 0)
                 {
+                    // Remove item if quantity becomes zero or negative
                     _context.CartItems.Remove(existingItem);
-                    _logger.LogDebug("Removed cart item due to zero quantity. SessionId: {SessionId}, ItemId: {ItemId}",
+                    _logger.LogDebug("Removed cart item due to zero/negative quantity. SessionId: {SessionId}, ItemId: {ItemId}",
                         sessionId, itemId);
                 }
                 else
@@ -125,25 +128,36 @@ namespace MesaMagicaApi.Services
                         sessionId, itemId, existingItem.Quantity);
                 }
             }
-            else if (quantity > 0)
+            else
             {
-                _context.CartItems.Add(new CartItem
+                // Add new item only if quantity is positive
+                if (quantity > 0)
                 {
-                    Id = Guid.NewGuid(),
-                    SessionId = sessionId,
-                    ItemId = itemId,
-                    Quantity = quantity,
-                    AddedAt = DateTime.UtcNow,
-                    Session = session,
-                    MenuItem = menuItem
-                });
-                _logger.LogDebug("Added new cart item. SessionId: {SessionId}, ItemId: {ItemId}, Quantity: {Quantity}",
-                    sessionId, itemId, quantity);
+                    _context.CartItems.Add(new CartItem
+                    {
+                        Id = Guid.NewGuid(),
+                        SessionId = sessionId,
+                        ItemId = itemId,
+                        Quantity = quantity,
+                        AddedAt = DateTime.UtcNow,
+                        Session = session,
+                        MenuItem = menuItem
+                    });
+                    _logger.LogDebug("Added new cart item. SessionId: {SessionId}, ItemId: {ItemId}, Quantity: {Quantity}",
+                        sessionId, itemId, quantity);
+                }
+                else
+                {
+                    _logger.LogWarning("Attempted to add new item with negative quantity. SessionId: {SessionId}, ItemId: {ItemId}",
+                        sessionId, itemId);
+                    throw new InvalidOperationException("Cannot add a new item with negative quantity.");
+                }
             }
 
             await _context.SaveChangesAsync();
             await InvalidateCacheAsync(sessionId);
         }
+        //------------------end changes----------------------
 
         public async Task RemoveFromCartAsync(Guid sessionId, Guid itemId)
         {
@@ -156,6 +170,11 @@ namespace MesaMagicaApi.Services
                 await _context.SaveChangesAsync();
                 _logger.LogDebug("Removed cart item. SessionId: {SessionId}, ItemId: {ItemId}", sessionId, itemId);
             }
+            else
+            {
+                _logger.LogWarning("Attempted to remove non-existent cart item. SessionId: {SessionId}, ItemId: {ItemId}",
+                    sessionId, itemId);
+            }
 
             await InvalidateCacheAsync(sessionId);
         }
@@ -165,8 +184,7 @@ namespace MesaMagicaApi.Services
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
-                // Validate tenant
-                var userTenantKey = user.FindFirst("tenantKey")?.Value;
+                var userTenantKey = user.FindFirst(JwtClaims.TenantKey)?.Value;
                 if (string.IsNullOrEmpty(userTenantKey) || userTenantKey != tenantKey)
                     throw new UnauthorizedAccessException("Tenant mismatch in JWT token.");
 
@@ -179,7 +197,6 @@ namespace MesaMagicaApi.Services
                 if (!cartItems.Any())
                     throw new InvalidOperationException("Cannot submit an empty cart.");
 
-                // Validate all items
                 var unavailableItems = cartItems
                     .Where(c => c.MenuItem == null || !c.MenuItem.IsAvailable || !c.MenuItem.Category.IsActive)
                     .ToList();

@@ -1,4 +1,5 @@
-﻿using MesaApi.Models;
+﻿using MesaApi.Common;
+using MesaApi.Models;
 using MesaApi.Multitenancy;
 using MesaMagica.Api.Data;
 using Microsoft.EntityFrameworkCore;
@@ -6,45 +7,23 @@ using System.Security.Claims;
 
 namespace MesaApi.Services
 {
-
-    public class MenuService : IMenuService
+    //------------------changes for using base service and consistent tenant validation----------------------
+    public class MenuService : TenantAwareService, IMenuService
     {
-        private readonly ApplicationDbContext _dbContext;
-        private readonly ITenantContext _tenantContext;
-        private readonly ILogger<MenuService> _logger;
-
-        public MenuService(ApplicationDbContext dbContext, ITenantContext tenantContext, ILogger<MenuService> logger)
+        public MenuService(
+            ApplicationDbContext dbContext,
+            ITenantContext tenantContext,
+            ILogger<MenuService> logger)
+            : base(dbContext, tenantContext, logger)
         {
-            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
-            _tenantContext = tenantContext ?? throw new ArgumentNullException(nameof(tenantContext));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        private async Task ValidateAdminUserAsync(ClaimsPrincipal user, string tenantSlug)
+        public async Task<MenuItemResponse> CreateMenuItemAsync(CreateMenuItemRequest request, ClaimsPrincipal user, string tenantKey)
         {
-            if (!user.IsInRole("Admin"))
-                throw new UnauthorizedAccessException("User is not authorized to perform this action.");
+            if (string.IsNullOrEmpty(tenantKey))
+                throw new ArgumentException("Tenant key is missing.");
 
-            var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
-                throw new UnauthorizedAccessException("Invalid user ID in token.");
-
-            var dbUser = await _dbContext.Users
-                .FirstOrDefaultAsync(u => u.UserId == userId && u.Role == "Admin" && u.IsActive);
-            if (dbUser == null)
-                throw new UnauthorizedAccessException("User is not an active admin in the database.");
-
-            var userTenantSlug = user.FindFirst("tenantSlug")?.Value;
-            if (string.IsNullOrEmpty(userTenantSlug) || userTenantSlug != tenantSlug)
-                throw new UnauthorizedAccessException("Tenant mismatch in request.");
-        }
-
-        public async Task<MenuItemResponse> CreateMenuItemAsync(CreateMenuItemRequest request, ClaimsPrincipal user, string tenantSlug)
-        {
-            if (string.IsNullOrEmpty(tenantSlug))
-                throw new ArgumentException("Tenant slug is missing.");
-
-            await ValidateAdminUserAsync(user, tenantSlug);
+            var userId = await ValidateAdminAndGetUserIdAsync(user, tenantKey);
 
             if (string.IsNullOrEmpty(request.Name))
                 throw new ArgumentException("Menu item name is required.");
@@ -68,8 +47,8 @@ namespace MesaApi.Services
             _dbContext.MenuItems.Add(menuItem);
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation("Menu item created. ItemId: {ItemId}, Name: {Name}, TenantSlug: {TenantSlug}",
-                menuItem.ItemId, menuItem.Name, tenantSlug);
+            _logger.LogInformation("Menu item created. ItemId: {ItemId}, Name: {Name}, TenantKey: {TenantKey}",
+                menuItem.ItemId, menuItem.Name, tenantKey);
 
             return new MenuItemResponse
             {
@@ -84,12 +63,12 @@ namespace MesaApi.Services
             };
         }
 
-        public async Task<MenuItemResponse> UpdateMenuItemAsync(Guid itemId, UpdateMenuItemRequest request, ClaimsPrincipal user, string tenantSlug)
+        public async Task<MenuItemResponse> UpdateMenuItemAsync(Guid itemId, UpdateMenuItemRequest request, ClaimsPrincipal user, string tenantKey)
         {
-            if (string.IsNullOrEmpty(tenantSlug))
-                throw new ArgumentException("Tenant slug is missing.");
+            if (string.IsNullOrEmpty(tenantKey))
+                throw new ArgumentException("Tenant key is missing.");
 
-            await ValidateAdminUserAsync(user, tenantSlug);
+            await ValidateAdminAndGetUserIdAsync(user, tenantKey);
 
             if (string.IsNullOrEmpty(request.Name))
                 throw new ArgumentException("Menu item name is required.");
@@ -113,8 +92,8 @@ namespace MesaApi.Services
             menuItem.ImageUrl = request.ImageUrl;
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation("Menu item updated. ItemId: {ItemId}, Name: {Name}, TenantSlug: {TenantSlug}",
-                menuItem.ItemId, menuItem.Name, tenantSlug);
+            _logger.LogInformation("Menu item updated. ItemId: {ItemId}, Name: {Name}, TenantKey: {TenantKey}",
+                menuItem.ItemId, menuItem.Name, tenantKey);
 
             return new MenuItemResponse
             {
@@ -129,12 +108,12 @@ namespace MesaApi.Services
             };
         }
 
-        public async Task DeleteMenuItemAsync(Guid itemId, ClaimsPrincipal user, string tenantSlug)
+        public async Task DeleteMenuItemAsync(Guid itemId, ClaimsPrincipal user, string tenantKey)
         {
-            if (string.IsNullOrEmpty(tenantSlug))
-                throw new ArgumentException("Tenant slug is missing.");
+            if (string.IsNullOrEmpty(tenantKey))
+                throw new ArgumentException("Tenant key is missing.");
 
-            await ValidateAdminUserAsync(user, tenantSlug);
+            await ValidateAdminAndGetUserIdAsync(user, tenantKey);
 
             var menuItem = await _dbContext.MenuItems
                 .FirstOrDefaultAsync(m => m.ItemId == itemId);
@@ -149,14 +128,14 @@ namespace MesaApi.Services
             _dbContext.MenuItems.Remove(menuItem);
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation("Menu item deleted. ItemId: {ItemId}, TenantSlug: {TenantSlug}",
-                itemId, tenantSlug);
+            _logger.LogInformation("Menu item deleted. ItemId: {ItemId}, TenantKey: {TenantKey}",
+                itemId, tenantKey);
         }
 
-        public async Task<List<MenuItemResponse>> GetMenuItemsAsync(string tenantSlug)
+        public async Task<List<MenuItemResponse>> GetMenuItemsAsync(string tenantKey)
         {
-            if (string.IsNullOrEmpty(tenantSlug))
-                throw new ArgumentException("Tenant slug is missing.");
+            if (string.IsNullOrEmpty(tenantKey))
+                throw new ArgumentException("Tenant key is missing.");
 
             var menuItems = await _dbContext.MenuItems
                 .Include(m => m.Category)
@@ -177,10 +156,10 @@ namespace MesaApi.Services
             return menuItems;
         }
 
-        public async Task<MenuItemResponse> GetMenuItemAsync(Guid itemId, string tenantSlug)
+        public async Task<MenuItemResponse> GetMenuItemAsync(Guid itemId, string tenantKey)
         {
-            if (string.IsNullOrEmpty(tenantSlug))
-                throw new ArgumentException("Tenant slug is missing.");
+            if (string.IsNullOrEmpty(tenantKey))
+                throw new ArgumentException("Tenant key is missing.");
 
             var menuItem = await _dbContext.MenuItems
                 .Include(m => m.Category)
@@ -200,5 +179,43 @@ namespace MesaApi.Services
                 ImageUrl = menuItem.ImageUrl
             };
         }
+
+        //------------------changes for adding get menu items by category----------------------
+        public async Task<List<MenuItemResponse>> GetMenuItemsByCategoryAsync(Guid categoryId, string tenantKey)
+        {
+            if (string.IsNullOrEmpty(tenantKey))
+                throw new ArgumentException("Tenant key is missing.");
+
+            // Verify category exists and is active
+            var category = await _dbContext.Categories
+                .FirstOrDefaultAsync(c => c.CategoryId == categoryId && c.IsActive);
+
+            if (category == null)
+                throw new ArgumentException("Category not found or inactive.");
+
+            var menuItems = await _dbContext.MenuItems
+                .Include(m => m.Category)
+                .Where(m => m.CategoryId == categoryId && m.IsAvailable && m.Category.IsActive)
+                .Select(m => new MenuItemResponse
+                {
+                    ItemId = m.ItemId,
+                    Name = m.Name,
+                    Description = m.Description,
+                    Price = m.Price,
+                    CategoryId = m.CategoryId,
+                    CategoryName = m.Category.Name,
+                    IsAvailable = m.IsAvailable,
+                    ImageUrl = m.ImageUrl
+                })
+                .OrderBy(m => m.Name) // Optional: order by name
+                .ToListAsync();
+
+            _logger.LogDebug("Retrieved {Count} menu items for category {CategoryId}",
+                menuItems.Count, categoryId);
+
+            return menuItems;
+        }
+        //------------------end changes----------------------
     }
+    //------------------end changes----------------------
 }

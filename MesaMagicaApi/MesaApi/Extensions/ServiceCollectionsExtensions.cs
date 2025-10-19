@@ -15,7 +15,7 @@ namespace MesaMagica.Api.Extensions
     {
         public static IServiceCollection AddMesaMagicaServices(this IServiceCollection services, IConfiguration configuration)
         {
-            // Register ApplicationDbContext with tenant-based connection string
+            //------------------changes for conditional sensitive data logging----------------------
             services.AddDbContext<ApplicationDbContext>((serviceProvider, options) =>
             {
                 var tenantContext = serviceProvider.GetRequiredService<ITenantContext>();
@@ -23,10 +23,18 @@ namespace MesaMagica.Api.Extensions
                 {
                     throw new InvalidOperationException("Tenant context not resolved.");
                 }
-                options.UseNpgsql(tenantContext.ConnectionString)
-                       .EnableSensitiveDataLogging()
-                       .EnableDetailedErrors();
+
+                var env = serviceProvider.GetService<IHostEnvironment>();
+                options.UseNpgsql(tenantContext.ConnectionString);
+
+                if (env != null && env.IsDevelopment())
+                {
+                    options.EnableSensitiveDataLogging()
+                           .EnableDetailedErrors();
+                }
             });
+            //------------------end changes----------------------
+
             services.AddScoped<ISessionService, SessionService>();
             services.AddSingleton<ILoggingService, LoggingService>();
             services.AddScoped<IOrderService, OrderService>();
@@ -34,24 +42,44 @@ namespace MesaMagica.Api.Extensions
             services.AddScoped<ICategoryService, CategoryService>();
             services.AddScoped<IUsersService, UsersService>();
             services.AddScoped<IAuthService, AuthService>();
-            // Add CartService (see below)
             services.AddScoped<ICartService, CartService>();
-            services.AddHttpClient(); // IHttpClientFactory
-            services.Configure<UpstashSettings>(configuration.GetSection("Upstash"));
-            services.AddSingleton(sp => sp.GetRequiredService<IOptions<UpstashSettings>>().Value);
-            services.AddSingleton<IConnectionMultiplexer>(sp =>
-            {
-                var config = configuration.GetSection("Upstash").GetValue<string>("Configuration");
-                return ConnectionMultiplexer.Connect(config!);
-            });
+            services.AddHttpClient();
+
+            //------------------changes for dynamic Redis configuration----------------------
+            services.Configure<RedisSettings>(configuration.GetSection("Redis"));
+            services.AddSingleton(sp => sp.GetRequiredService<IOptions<RedisSettings>>().Value);
+
+            // Configure Redis based on provider
+            var redisSettings = configuration.GetSection("Redis").Get<RedisSettings>();
+
             if (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development")
             {
                 services.AddSingleton<IRedisService, MemoryRedisService>();
             }
-            else
+            else if (redisSettings?.Provider == "StackExchange" || redisSettings?.Provider == "Local")
             {
+                services.AddSingleton<IConnectionMultiplexer>(sp =>
+                {
+                    var settings = sp.GetRequiredService<RedisSettings>();
+                    return ConnectionMultiplexer.Connect(settings.ConnectionString);
+                });
                 services.AddScoped<IRedisService, RedisService>();
             }
+            else if (redisSettings?.Provider == "Upstash")
+            {
+                services.AddSingleton<IConnectionMultiplexer>(sp =>
+                {
+                    var settings = sp.GetRequiredService<RedisSettings>();
+                    return ConnectionMultiplexer.Connect(settings.ConnectionString);
+                });
+                services.AddScoped<IRedisService, RedisService>();
+            }
+            else
+            {
+                // Fallback to in-memory
+                services.AddSingleton<IRedisService, MemoryRedisService>();
+            }
+            //------------------end changes----------------------
 
             return services;
         }

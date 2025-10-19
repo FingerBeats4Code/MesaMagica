@@ -1,4 +1,5 @@
-﻿using MesaApi.Models;
+﻿using MesaApi.Common;
+using MesaApi.Models;
 using MesaApi.Multitenancy;
 using MesaMagica.Api.Data;
 using Microsoft.EntityFrameworkCore;
@@ -6,38 +7,15 @@ using System.Security.Claims;
 
 namespace MesaApi.Services
 {
-    public class CategoryService : ICategoryService
+    //------------------changes for using base service and consistent tenant validation----------------------
+    public class CategoryService : TenantAwareService, ICategoryService
     {
-        private readonly ApplicationDbContext _dbContext;
-        private readonly ITenantContext _tenantContext;
-        private readonly ILogger<CategoryService> _logger;
-
-        public CategoryService(ApplicationDbContext dbContext, ITenantContext tenantContext, ILogger<CategoryService> logger)
+        public CategoryService(
+            ApplicationDbContext dbContext,
+            ITenantContext tenantContext,
+            ILogger<CategoryService> logger)
+            : base(dbContext, tenantContext, logger)
         {
-            _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
-            _tenantContext = tenantContext ?? throw new ArgumentNullException(nameof(tenantContext));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        }
-
-        private async Task ValidateAdminUserAsync(ClaimsPrincipal user, string tenantKey)
-        {
-            //-----------------------------changes for tenant claim validation-----------------
-            if (!user.IsInRole("Admin"))
-                throw new UnauthorizedAccessException("User is not authorized to perform this action.");
-
-            var userTenantKey = user.FindFirst("tenantKey")?.Value;
-            if (string.IsNullOrEmpty(userTenantKey) || userTenantKey != tenantKey)
-                throw new UnauthorizedAccessException("Tenant mismatch in JWT token.");
-            //----------------------------------------------------------------------------
-
-            var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
-                throw new UnauthorizedAccessException("Invalid user ID in token.");
-
-            var dbUser = await _dbContext.Users
-                .FirstOrDefaultAsync(u => u.UserId == userId && u.Role == "Admin" && u.IsActive);
-            if (dbUser == null)
-                throw new UnauthorizedAccessException("User is not an active admin in the database.");
         }
 
         public async Task<CategoryResponse> CreateCategoryAsync(CreateCategoryRequest request, ClaimsPrincipal user, string tenantKey)
@@ -45,7 +23,7 @@ namespace MesaApi.Services
             if (string.IsNullOrEmpty(tenantKey))
                 throw new ArgumentException("Tenant key is missing.");
 
-            await ValidateAdminUserAsync(user, tenantKey);
+            await ValidateAdminAndGetUserIdAsync(user, tenantKey);
 
             if (string.IsNullOrEmpty(request.Name))
                 throw new ArgumentException("Category name is required.");
@@ -59,6 +37,7 @@ namespace MesaApi.Services
             {
                 CategoryId = Guid.NewGuid(),
                 Name = request.Name,
+                Description = request.Description,
                 IsActive = request.IsActive
             };
 
@@ -72,6 +51,7 @@ namespace MesaApi.Services
             {
                 CategoryId = category.CategoryId,
                 Name = category.Name,
+                Description = category.Description,
                 IsActive = category.IsActive
             };
         }
@@ -81,7 +61,7 @@ namespace MesaApi.Services
             if (string.IsNullOrEmpty(tenantKey))
                 throw new ArgumentException("Tenant key is missing.");
 
-            await ValidateAdminUserAsync(user, tenantKey);
+            await ValidateAdminAndGetUserIdAsync(user, tenantKey);
 
             if (string.IsNullOrEmpty(request.Name))
                 throw new ArgumentException("Category name is required.");
@@ -97,6 +77,7 @@ namespace MesaApi.Services
                 throw new ArgumentException("Category with this name already exists.");
 
             category.Name = request.Name;
+            category.Description = request.Description;
             category.IsActive = request.IsActive;
             await _dbContext.SaveChangesAsync();
 
@@ -107,6 +88,7 @@ namespace MesaApi.Services
             {
                 CategoryId = category.CategoryId,
                 Name = category.Name,
+                Description = category.Description,
                 IsActive = category.IsActive
             };
         }
@@ -116,7 +98,7 @@ namespace MesaApi.Services
             if (string.IsNullOrEmpty(tenantKey))
                 throw new ArgumentException("Tenant key is missing.");
 
-            await ValidateAdminUserAsync(user, tenantKey);
+            await ValidateAdminAndGetUserIdAsync(user, tenantKey);
 
             var category = await _dbContext.Categories
                 .FirstOrDefaultAsync(c => c.CategoryId == categoryId);
@@ -146,6 +128,7 @@ namespace MesaApi.Services
                 {
                     CategoryId = c.CategoryId,
                     Name = c.Name,
+                    Description = c.Description,
                     IsActive = c.IsActive
                 })
                 .ToListAsync();
@@ -167,8 +150,10 @@ namespace MesaApi.Services
             {
                 CategoryId = category.CategoryId,
                 Name = category.Name,
+                Description = category.Description,
                 IsActive = category.IsActive
             };
         }
     }
+    //------------------end changes----------------------
 }

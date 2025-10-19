@@ -1,4 +1,5 @@
-﻿using MesaApi.Models;
+﻿using MesaApi.Common;
+using MesaApi.Models;
 using MesaMagica.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -12,10 +13,12 @@ namespace MesaApi.Services
     public class OrderService : IOrderService
     {
         private readonly ApplicationDbContext _dbContext;
+        private readonly ILogger<OrderService> _logger;
 
-        public OrderService(ApplicationDbContext dbContext)
+        public OrderService(ApplicationDbContext dbContext, ILogger<OrderService> logger)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public async Task<OrderResponse> CreateOrderAsync(CreateOrderRequest request, ClaimsPrincipal user, string tenantKey)
@@ -23,27 +26,27 @@ namespace MesaApi.Services
             if (request == null || !request.Items.Any())
                 throw new ArgumentException("Order request must contain at least one item.");
 
-            // Validate tenant
-            var userTenantKey = user.FindFirst("tenantKey")?.Value;
+            //------------------changes for consistent tenant validation from JWT only----------------------
+            var userTenantKey = user.FindFirst(JwtClaims.TenantKey)?.Value;
             if (string.IsNullOrEmpty(userTenantKey) || userTenantKey != tenantKey)
                 throw new UnauthorizedAccessException("Tenant mismatch.");
 
-            // Validate session from user claims
-            var sessionIdClaim = user.FindFirst("sessionId")?.Value;
+            var sessionIdClaim = user.FindFirst(JwtClaims.SessionId)?.Value;
             if (!Guid.TryParse(sessionIdClaim, out var sessionId))
                 throw new InvalidOperationException("Invalid or missing sessionId in JWT.");
+            //------------------end changes----------------------
 
             var session = await _dbContext.TableSessions
                 .FirstOrDefaultAsync(s => s.SessionId == sessionId && s.IsActive);
             if (session == null)
                 throw new InvalidOperationException($"Session {sessionId} not found or inactive for tenant {tenantKey}.");
 
-            // Create order
+            //------------------changes for using constants----------------------
             var order = new Order
             {
                 OrderId = Guid.NewGuid(),
                 SessionId = sessionId,
-                Status = "Pending",
+                Status = OrderStatus.Pending,
                 TotalAmount = request.Items.Sum(i => i.Price * i.Quantity),
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
@@ -56,9 +59,13 @@ namespace MesaApi.Services
                     Price = i.Price
                 }).ToList()
             };
+            //------------------end changes----------------------
 
             _dbContext.Orders.Add(order);
             await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation("Order created. OrderId: {OrderId}, SessionId: {SessionId}, TenantKey: {TenantKey}",
+                order.OrderId, sessionId, tenantKey);
 
             return new OrderResponse
             {
@@ -81,13 +88,15 @@ namespace MesaApi.Services
 
         public async Task<OrderResponse> GetOrderAsync(Guid orderId, ClaimsPrincipal user, string tenantKey)
         {
-            var userTenantKey = user.FindFirst("tenantKey")?.Value;
+            //------------------changes for consistent tenant validation from JWT only----------------------
+            var userTenantKey = user.FindFirst(JwtClaims.TenantKey)?.Value;
             if (string.IsNullOrEmpty(userTenantKey) || userTenantKey != tenantKey)
                 throw new UnauthorizedAccessException("Tenant mismatch.");
 
-            var sessionIdClaim = user.FindFirst("sessionId")?.Value;
+            var sessionIdClaim = user.FindFirst(JwtClaims.SessionId)?.Value;
             if (!Guid.TryParse(sessionIdClaim, out var sessionId))
                 throw new InvalidOperationException("Invalid or missing sessionId in JWT.");
+            //------------------end changes----------------------
 
             var order = await _dbContext.Orders
                 .Include(o => o.OrderItems)
@@ -118,13 +127,15 @@ namespace MesaApi.Services
 
         public async Task<List<OrderResponse>> GetOrdersBySessionAsync(Guid sessionId, ClaimsPrincipal user, string tenantKey)
         {
-            var userTenantKey = user.FindFirst("tenantKey")?.Value;
+            //------------------changes for consistent tenant validation from JWT only----------------------
+            var userTenantKey = user.FindFirst(JwtClaims.TenantKey)?.Value;
             if (string.IsNullOrEmpty(userTenantKey) || userTenantKey != tenantKey)
                 throw new UnauthorizedAccessException("Tenant mismatch.");
 
-            var claimSessionId = user.FindFirst("sessionId")?.Value;
+            var claimSessionId = user.FindFirst(JwtClaims.SessionId)?.Value;
             if (!Guid.TryParse(claimSessionId, out var parsedSessionId) || parsedSessionId != sessionId)
                 throw new InvalidOperationException("Invalid sessionId in JWT.");
+            //------------------end changes----------------------
 
             var orders = await _dbContext.Orders
                 .Where(o => o.SessionId == sessionId)
@@ -153,13 +164,15 @@ namespace MesaApi.Services
 
         public async Task<OrderResponse> UpdateOrderItemsAsync(Guid orderId, UpdateOrderItemsRequest request, ClaimsPrincipal user, string tenantKey)
         {
-            var userTenantKey = user.FindFirst("tenantKey")?.Value;
+            //------------------changes for consistent tenant validation from JWT only----------------------
+            var userTenantKey = user.FindFirst(JwtClaims.TenantKey)?.Value;
             if (string.IsNullOrEmpty(userTenantKey) || userTenantKey != tenantKey)
                 throw new UnauthorizedAccessException("Tenant mismatch.");
 
-            var sessionIdClaim = user.FindFirst("sessionId")?.Value;
+            var sessionIdClaim = user.FindFirst(JwtClaims.SessionId)?.Value;
             if (!Guid.TryParse(sessionIdClaim, out var sessionId))
                 throw new InvalidOperationException("Invalid or missing sessionId in JWT.");
+            //------------------end changes----------------------
 
             var order = await _dbContext.Orders
                 .Include(o => o.OrderItems)
