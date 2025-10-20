@@ -1,6 +1,8 @@
+// mesa-magica-pwa-app/src/api/api.ts
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 
-// Existing API Interfaces (unchanged)
+// ==================== API INTERFACES ====================
+
 export interface StartSessionRequest {
   tableId: string;
   qrCodeUrl: string;
@@ -59,12 +61,13 @@ export interface OrderItemResponse {
 export interface LoginRequest {
   username: string;
   password: string;
-  tenantSlug: string;
+  tenantSlug?: string;
 }
 
 export interface LoginResponse {
   token: string;
-  role: string; // 'admin' or 'staff'
+  role: string;
+  userId: string;
 }
 
 export interface ActiveOrderResponse {
@@ -90,19 +93,46 @@ export interface CreateTableRequest {
 
 export interface CreateTableResponse {
   tableId: string;
+  tableNumber: string;
   qrCodeUrl: string;
+  seatCapacity: number;
+  isOccupied: boolean;
+  createdAt: string;
+}
+
+export interface TableResponse {
+  tableId: number;
+  tableNumber: string;
+  qrCodeUrl: string;
+  seatCapacity: number;
+  isOccupied: boolean;
+  createdAt: string;
 }
 
 export interface Staff {
   id: string;
   username: string;
   role: string;
+  email: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export interface AddStaffRequest {
   username: string;
   password: string;
   role: string;
+  email: string;
+}
+
+export interface UpdateStaffRequest {
+  id: string;
+  username: string;
+  role: string;
+  email: string;
+  isActive: boolean;
+  password?: string;
 }
 
 export interface EditCartRequest {
@@ -121,9 +151,18 @@ export interface PaymentResponse {
   paymentStatus: string;
   amountPaid: number;
   transactionId: string;
+  paymentDate?: string;
 }
 
-// Create axios instance
+export interface CurrentUserResponse {
+  username: string;
+  role: string;
+  userId: string;
+  isAuthenticated: boolean;
+}
+
+// ==================== AXIOS CONFIGURATION ====================
+
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
   timeout: 30000,
@@ -151,7 +190,7 @@ const TokenManager = {
   },
   
   isAdminRoute: (url?: string) => {
-    return url?.includes('/admin') || url?.includes('/auth/login');
+    return url?.includes('/admin') || url?.includes('/auth');
   }
 };
 
@@ -159,7 +198,8 @@ const TokenManager = {
 const generateRequestId = () => 
   `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-// 🔐 Enhanced Request Interceptor
+// ==================== REQUEST INTERCEPTOR ====================
+
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const timestamp = new Date().toISOString();
@@ -194,10 +234,10 @@ api.interceptors.request.use(
   }
 );
 
-// 🔐 Enhanced Response Interceptor
+// ==================== RESPONSE INTERCEPTOR ====================
+
 api.interceptors.response.use(
   (response) => {
-    // Log response time for monitoring
     const config = response.config as any;
     if (config.metadata?.startTime) {
       const duration = Date.now() - config.metadata.startTime;
@@ -209,7 +249,6 @@ api.interceptors.response.use(
     const timestamp = new Date().toISOString();
     const originalRequest = error.config as any;
     
-    // Handle network errors
     if (!error.response) {
       console.error(`[${timestamp}] 🌐 Network error: ${error.message}`);
       return Promise.reject({
@@ -221,7 +260,6 @@ api.interceptors.response.use(
     const { status } = error.response;
     const isAdminRoute = TokenManager.isAdminRoute(originalRequest?.url);
 
-    // Handle 401 Unauthorized
     if (status === 401) {
       console.error(`[${timestamp}] ❌ 401 Unauthorized - Token expired or invalid`);
       
@@ -229,7 +267,6 @@ api.interceptors.response.use(
         console.log(`[${timestamp}] 🚪 Clearing admin session and redirecting to login`);
         TokenManager.clearAdminAuth();
         
-        // Prevent redirect loop
         if (!window.location.pathname.includes('/login')) {
           window.location.href = '/login';
         }
@@ -237,7 +274,6 @@ api.interceptors.response.use(
         console.log(`[${timestamp}] 🔄 Clearing customer session and reloading`);
         TokenManager.clearCustomerAuth();
         
-        // Prevent reload loop
         if (!originalRequest._isRetry) {
           window.location.reload();
         }
@@ -246,7 +282,6 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    // Handle 403 Forbidden
     if (status === 403) {
       console.error(`[${timestamp}] 🚫 403 Forbidden: Insufficient permissions`);
       return Promise.reject({
@@ -256,7 +291,6 @@ api.interceptors.response.use(
       });
     }
 
-    // Handle 404 Not Found
     if (status === 404) {
       console.error(`[${timestamp}] 🔍 404 Not Found: ${originalRequest?.url}`);
       return Promise.reject({
@@ -266,7 +300,6 @@ api.interceptors.response.use(
       });
     }
 
-    // Handle 429 Too Many Requests
     if (status === 429) {
       const retryAfter = error.response.headers['retry-after'];
       console.error(`[${timestamp}] ⏱️ 429 Too Many Requests - Retry after: ${retryAfter}s`);
@@ -278,7 +311,6 @@ api.interceptors.response.use(
       });
     }
 
-    // Handle 500+ Server Errors
     if (status >= 500) {
       console.error(`[${timestamp}] 🔥 ${status} Server Error:`, error.response.data);
       return Promise.reject({
@@ -288,7 +320,6 @@ api.interceptors.response.use(
       });
     }
 
-    // Handle 400 Bad Request
     if (status === 400) {
       console.error(`[${timestamp}] ⚠️ 400 Bad Request:`, error.response.data);
       const errorData = error.response.data as { message?: string };
@@ -299,13 +330,13 @@ api.interceptors.response.use(
       });
     }
 
-    // Generic error handling
     console.error(`[${timestamp}] ❌ Error ${status}:`, error.response.data);
     return Promise.reject(error);
   }
 );
 
-// 🟢 Start session
+// ==================== CUSTOMER ENDPOINTS ====================
+
 export const startSession = async (payload: StartSessionRequest): Promise<SessionResponse> => {
   try {
     console.log(`[${new Date().toISOString()}] 🚀 Starting session for tableId: ${payload.tableId}`);
@@ -318,7 +349,6 @@ export const startSession = async (payload: StartSessionRequest): Promise<Sessio
   }
 };
 
-// 🟢 Get menu items
 export const getMenuItems = async (categoryId?: string): Promise<MenuItemResponse[]> => {
   try {
     const url = categoryId ? `api/menu/categories/${categoryId}/items` : '/api/menu/items';
@@ -331,7 +361,6 @@ export const getMenuItems = async (categoryId?: string): Promise<MenuItemRespons
   }
 };
 
-// 🟢 Get categories
 export const getCategories = async (): Promise<Category[]> => {
   try {
     console.log(`[${new Date().toISOString()}] 📂 Fetching categories`);
@@ -343,7 +372,6 @@ export const getCategories = async (): Promise<Category[]> => {
   }
 };
 
-// 🟢 Get cart
 export const getCart = async (sessionId: string): Promise<CartItem[]> => {
   try {
     console.log(`[${new Date().toISOString()}] 🛒 Fetching cart for sessionId: ${sessionId}`);
@@ -355,7 +383,6 @@ export const getCart = async (sessionId: string): Promise<CartItem[]> => {
   }
 };
 
-// 🟢 Add to cart
 export const addToCartBackend = async (
   sessionId: string,
   itemId: string,
@@ -370,7 +397,6 @@ export const addToCartBackend = async (
   }
 };
 
-// 🟢 Remove from cart
 export const removeFromCartBackend = async (
   sessionId: string,
   itemId: string
@@ -384,7 +410,6 @@ export const removeFromCartBackend = async (
   }
 };
 
-// 🟢 Submit order
 export const submitOrder = async (
   sessionId: string,    
   orderData: { tableId: string }
@@ -403,175 +428,264 @@ export const submitOrder = async (
   }
 };
 
-// 🔐 Admin: Login
+// ==================== AUTH ENDPOINTS ====================
+
 export const login = async (payload: LoginRequest): Promise<LoginResponse> => {
   try {
-    // const response = await api.post('/api/auth/login', payload);
-    // return response.data;
-    console.log(`[${new Date().toISOString()}] 🔐 Hardcoded login for ${payload.username}`);
-    if (payload.username === 'admin' && payload.password === 'password') {
-      return {
-        token: `admin-token-${payload.tenantSlug}-${Date.now()}`,
-        role: 'admin',
-      };
-    } else if (payload.username === 'staff' && payload.password === 'password') {
-      return {
-        token: `staff-token-${payload.tenantSlug}-${Date.now()}`,
-        role: 'staff',
-      };
-    }
-    throw new Error('Invalid credentials');
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] ❌ Error logging in:`, error);
+    console.log(`[${new Date().toISOString()}] 🔐 Logging in user: ${payload.username}`);
+    const response = await api.post('/api/auth/login', {
+      username: payload.username,
+      password: payload.password,
+      tenantSlug: payload.tenantSlug
+    });
+    console.log(`[${new Date().toISOString()}] ✅ Login successful`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error logging in:`, error.response?.data || error.message);
     throw error;
   }
 };
 
-// 🔐 Admin: Get active orders
+export const logout = async (): Promise<void> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🚪 Logging out`);
+    await api.post('/api/auth/logout');
+    console.log(`[${new Date().toISOString()}] ✅ Logout successful`);
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error logging out:`, error.response?.data || error.message);
+    // Continue with client-side logout even if server call fails
+  }
+};
+
+export const getCurrentUser = async (): Promise<CurrentUserResponse> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 👤 Fetching current user`);
+    const response = await api.get('/api/auth/me');
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching current user:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const changePassword = async (currentPassword: string, newPassword: string): Promise<void> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🔑 Changing password`);
+    await api.post('/api/auth/change-password', {
+      currentPassword,
+      newPassword
+    });
+    console.log(`[${new Date().toISOString()}] ✅ Password changed successfully`);
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error changing password:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// ==================== ADMIN ORDER ENDPOINTS ====================
+
 export const getActiveOrders = async (): Promise<ActiveOrderResponse[]> => {
   try {
-    // const response = await api.get('/api/admin/orders/active');
-    // return response.data;
-    console.log(`[${new Date().toISOString()}] 📋 Hardcoded getActiveOrders`);
-    return [
-      {
-        orderId: 'order-1',
-        sessionId: 'session-1',
-        tableId: '1',
-        status: 'pending',
-        totalAmount: 25.99,
-        createdAt: new Date().toISOString(),
-        items: [
-          { orderItemId: 'oi-1', itemId: 'item-1', itemName: 'Pizza Margherita', quantity: 2, price: 12.99 },
-        ],
-        paymentStatus: 'pending',
-      },
-      {
-        orderId: 'order-2',
-        sessionId: 'session-2',
-        tableId: '2',
-        status: 'prepared',
-        totalAmount: 18.50,
-        createdAt: new Date().toISOString(),
-        items: [
-          { orderItemId: 'oi-2', itemId: 'item-2', itemName: 'Pasta', quantity: 1, price: 18.50 },
-        ],
-        paymentStatus: 'paid',
-      },
-    ];
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] ❌ Error fetching active orders:`, error);
+    console.log(`[${new Date().toISOString()}] 📋 Fetching active orders`);
+    const response = await api.get('/api/admin/orders/active');
+    console.log(`[${new Date().toISOString()}] ✅ Retrieved ${response.data.length} active orders`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching active orders:`, error.response?.data || error.message);
     throw error;
   }
 };
 
-// 🔐 Admin: Update order status
 export const updateOrderStatus = async (payload: UpdateOrderRequest): Promise<void> => {
   try {
-    // await api.put('/api/admin/order/update', payload);
-    console.log(`[${new Date().toISOString()}] 📝 Hardcoded updateOrderStatus for orderId: ${payload.orderId} to ${payload.status}`);
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] ❌ Error updating order status:`, error);
+    console.log(`[${new Date().toISOString()}] 📝 Updating order status for orderId: ${payload.orderId} to ${payload.status}`);
+    await api.put('/api/admin/order/update', payload);
+    console.log(`[${new Date().toISOString()}] ✅ Order status updated successfully`);
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error updating order status:`, error.response?.data || error.message);
     throw error;
   }
 };
 
-// 🔐 Admin: Create table
-export const createTable = async (payload: CreateTableRequest): Promise<CreateTableResponse> => {
-  try {
-    // const response = await api.post('/api/admin/tables/create', payload);
-    // return response.data;
-    console.log(`[${new Date().toISOString()}] 🪑 Hardcoded createTable for tableNumber: ${payload.tableNumber}`);
-    return {
-      tableId: `table-${payload.tableNumber}`,
-      qrCodeUrl: `http://localhost.pizzapalace:8000/?tableId=${payload.tableNumber}`,
-    };
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] ❌ Error creating table:`, error);
-    throw error;
-  }
-};
-
-// 🔐 Admin: Add staff
-export const addStaff = async (payload: AddStaffRequest): Promise<Staff> => {
-  try {
-    // const response = await api.post('/api/admin/staff/add', payload);
-    // return response.data;
-    console.log(`[${new Date().toISOString()}] 👤 Hardcoded addStaff for ${payload.username}`);
-    return {
-      id: `staff-${payload.username}-${Date.now()}`,
-      username: payload.username,
-      role: payload.role,
-    };
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] ❌ Error adding staff:`, error);
-    throw error;
-  }
-};
-
-// 🔐 Admin: Get staff
-export const getStaff = async (): Promise<Staff[]> => {
-  try {
-    // const response = await api.get('/api/admin/staff');
-    // return response.data;
-    console.log(`[${new Date().toISOString()}] 👥 Hardcoded getStaff`);
-    return [
-      { id: 'staff-1', username: 'admin', role: 'admin' },
-      { id: 'staff-2', username: 'staff1', role: 'staff' },
-    ];
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] ❌ Error fetching staff:`, error);
-    throw error;
-  }
-};
-
-// 🔐 Admin: Update staff role
-export const updateStaffRole = async (id: string, role: string): Promise<void> => {
-  try {
-    // await api.put('/api/admin/staff/update', { id, role });
-    console.log(`[${new Date().toISOString()}] 🔄 Hardcoded updateStaffRole for id: ${id} to ${role}`);
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] ❌ Error updating staff role:`, error);
-    throw error;
-  }
-};
-
-// 🔐 Admin: Edit cart
-export const editCart = async (payload: EditCartRequest): Promise<void> => {
-  try {
-    // await api.put('/api/admin/cart/edit', payload);
-    console.log(`[${new Date().toISOString()}] ✏️ Hardcoded editCart for sessionId: ${payload.sessionId}`);
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] ❌ Error editing cart:`, error);
-    throw error;
-  }
-};
-
-// 🔐 Admin: Edit order
 export const editOrder = async (payload: EditOrderRequest): Promise<void> => {
   try {
-    // await api.put('/api/admin/order/edit', payload);
-    console.log(`[${new Date().toISOString()}] ✏️ Hardcoded editOrder for orderId: ${payload.orderId}`);
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] ❌ Error editing order:`, error);
+    console.log(`[${new Date().toISOString()}] ✏️ Editing order: ${payload.orderId}`);
+    await api.put('/api/admin/order/edit', payload);
+    console.log(`[${new Date().toISOString()}] ✅ Order edited successfully`);
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error editing order:`, error.response?.data || error.message);
     throw error;
   }
 };
 
-// 🔐 Admin: Get payment details
+export const editCart = async (payload: EditCartRequest): Promise<void> => {
+  try {
+    console.log(`[${new Date().toISOString()}] ✏️ Editing cart for sessionId: ${payload.sessionId}`);
+    await api.put('/api/admin/cart/edit', payload);
+    console.log(`[${new Date().toISOString()}] ✅ Cart edited successfully`);
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error editing cart:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
 export const getPaymentDetails = async (orderId: string): Promise<PaymentResponse> => {
   try {
-    // const response = await api.get(`/api/admin/payment/${orderId}`);
-    // return response.data;
-    console.log(`[${new Date().toISOString()}] 💳 Hardcoded getPaymentDetails for orderId: ${orderId}`);
-    return {
-      orderId,
-      paymentStatus: 'paid',
-      amountPaid: 25.99,
-      transactionId: `txn-${orderId}-${Date.now()}`,
-    };
-  } catch (error) {
-    console.error(`[${new Date().toISOString()}] ❌ Error fetching payment details:`, error);
+    console.log(`[${new Date().toISOString()}] 💳 Fetching payment details for orderId: ${orderId}`);
+    const response = await api.get(`/api/admin/payment/${orderId}`);
+    console.log(`[${new Date().toISOString()}] ✅ Payment details retrieved`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching payment details:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// ==================== ADMIN TABLE ENDPOINTS ====================
+
+export const createTable = async (payload: CreateTableRequest): Promise<CreateTableResponse> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🪑 Creating table: ${payload.tableNumber}`);
+    const response = await api.post('/api/admin/tables/create', payload);
+    console.log(`[${new Date().toISOString()}] ✅ Table created successfully`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error creating table:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const getTables = async (): Promise<TableResponse[]> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🪑 Fetching all tables`);
+    const response = await api.get('/api/admin/tables');
+    console.log(`[${new Date().toISOString()}] ✅ Retrieved ${response.data.length} tables`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching tables:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const getTable = async (tableId: number): Promise<TableResponse> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🪑 Fetching table: ${tableId}`);
+    const response = await api.get(`/api/admin/tables/${tableId}`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching table:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const updateTable = async (tableId: number, payload: Partial<CreateTableRequest>): Promise<TableResponse> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🪑 Updating table: ${tableId}`);
+    const response = await api.put(`/api/admin/tables/${tableId}`, payload);
+    console.log(`[${new Date().toISOString()}] ✅ Table updated successfully`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error updating table:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const deleteTable = async (tableId: number): Promise<void> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🗑️ Deleting table: ${tableId}`);
+    await api.delete(`/api/admin/tables/${tableId}`);
+    console.log(`[${new Date().toISOString()}] ✅ Table deleted successfully`);
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error deleting table:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// ==================== ADMIN STAFF ENDPOINTS ====================
+
+export const getStaff = async (): Promise<Staff[]> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 👥 Fetching staff list`);
+    const response = await api.get('/api/admin/staff');
+    console.log(`[${new Date().toISOString()}] ✅ Retrieved ${response.data.length} staff members`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching staff:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const getStaffMember = async (userId: string): Promise<Staff> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 👤 Fetching staff member: ${userId}`);
+    const response = await api.get(`/api/admin/staff/${userId}`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching staff member:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const addStaff = async (payload: AddStaffRequest): Promise<Staff> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 👤 Adding staff member: ${payload.username}`);
+    const response = await api.post('/api/admin/staff/add', payload);
+    console.log(`[${new Date().toISOString()}] ✅ Staff member added successfully`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error adding staff:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const updateStaffRole = async (id: string, role: string): Promise<Staff> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🔄 Updating staff role for id: ${id} to ${role}`);
+    const response = await api.put('/api/admin/staff/update', { 
+      id, 
+      role,
+      // Note: You may need to fetch the user first to get username, email, isActive
+      // Or modify the backend to accept partial updates
+    });
+    console.log(`[${new Date().toISOString()}] ✅ Staff role updated successfully`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error updating staff role:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const updateStaff = async (payload: UpdateStaffRequest): Promise<Staff> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🔄 Updating staff member: ${payload.id}`);
+    const response = await api.put('/api/admin/staff/update', payload);
+    console.log(`[${new Date().toISOString()}] ✅ Staff member updated successfully`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error updating staff member:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const deleteStaff = async (userId: string): Promise<void> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🗑️ Deleting staff member: ${userId}`);
+    await api.delete(`/api/admin/staff/${userId}`);
+    console.log(`[${new Date().toISOString()}] ✅ Staff member deleted successfully`);
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error deleting staff member:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+export const toggleStaffActive = async (userId: string): Promise<Staff> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🔄 Toggling active status for staff member: ${userId}`);
+    const response = await api.patch(`/api/admin/staff/${userId}/toggle-active`);
+    console.log(`[${new Date().toISOString()}] ✅ Staff active status toggled successfully`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error toggling staff active status:`, error.response?.data || error.message);
     throw error;
   }
 };
