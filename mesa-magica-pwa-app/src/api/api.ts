@@ -690,4 +690,16 @@ export const toggleStaffActive = async (userId: string): Promise<Staff> => {
   }
 };
 
+// 🟢 Customer: Get my orders
+export const getMyOrders = async (): Promise<OrderResponse[]> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 📋 Fetching my orders`);
+    const response = await api.get('/orders/my-orders');
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching my orders:`, error);
+    throw error;
+  }
+};
+
 export default api;

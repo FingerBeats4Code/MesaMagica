@@ -8,8 +8,8 @@ namespace MesaApi.Services
     {
         Task<TableResponse> CreateTableAsync(CreateTableRequest request, ClaimsPrincipal user, string tenantKey);
         Task<List<TableResponse>> GetTablesAsync(string tenantKey);
-        Task<TableResponse> GetTableAsync(int tableId, string tenantKey);
-        Task<TableResponse> UpdateTableAsync(int tableId, UpdateTableRequest request, ClaimsPrincipal user, string tenantKey);
-        Task DeleteTableAsync(int tableId, ClaimsPrincipal user, string tenantKey);
+        Task<TableResponse> GetTableAsync(Guid tableId, string tenantKey); // CHANGED
+        Task<TableResponse> UpdateTableAsync(Guid tableId, UpdateTableRequest request, ClaimsPrincipal user, string tenantKey); // CHANGED
+        Task DeleteTableAsync(Guid tableId, ClaimsPrincipal user, string tenantKey); // CHANGED
     }
 }

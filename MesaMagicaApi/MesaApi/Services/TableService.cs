@@ -32,19 +32,23 @@ namespace MesaApi.Services
             if (existingTable != null)
                 throw new ArgumentException($"Table {request.TableNumber} already exists");
 
+            var tableId = Guid.NewGuid(); // Generate Guid first
+
             var table = new RestaurantTable
             {
+                TableId = tableId,
                 TableNumber = request.TableNumber,
                 TableSeatSize = request.SeatCapacity,
                 IsOccupied = false,
                 CreatedAt = DateTime.UtcNow,
-                QRCodeUrl = GenerateQRCodeUrl(request.TableNumber)
+                QRCodeUrl = GenerateQRCodeUrl(tableId) // Use Guid in QR
             };
 
             _dbContext.RestaurantTables.Add(table);
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation("Table {TableNumber} created by {User}", request.TableNumber, user.Identity?.Name);
+            _logger.LogInformation("Table {TableNumber} created with ID {TableId} by {User}",
+                request.TableNumber, tableId, user.Identity?.Name);
 
             return MapToTableResponse(table);
         }
@@ -61,7 +65,7 @@ namespace MesaApi.Services
             return tables.Select(MapToTableResponse).ToList();
         }
 
-        public async Task<TableResponse> GetTableAsync(int tableId, string tenantKey)
+        public async Task<TableResponse> GetTableAsync(Guid tableId, string tenantKey)
         {
             if (string.IsNullOrEmpty(tenantKey))
                 throw new ArgumentException("Tenant key is missing.");
@@ -73,7 +77,7 @@ namespace MesaApi.Services
             return MapToTableResponse(table);
         }
 
-        public async Task<TableResponse> UpdateTableAsync(int tableId, UpdateTableRequest request, ClaimsPrincipal user, string tenantKey)
+        public async Task<TableResponse> UpdateTableAsync(Guid tableId, UpdateTableRequest request, ClaimsPrincipal user, string tenantKey)
         {
             if (string.IsNullOrEmpty(tenantKey))
                 throw new ArgumentException("Tenant key is missing.");
@@ -92,7 +96,7 @@ namespace MesaApi.Services
                     throw new ArgumentException($"Table number {request.TableNumber} already exists");
 
                 table.TableNumber = request.TableNumber;
-                table.QRCodeUrl = GenerateQRCodeUrl(request.TableNumber);
+                // Don't regenerate QR code - tableId stays the same
             }
 
             if (request.SeatCapacity.HasValue)
@@ -105,7 +109,7 @@ namespace MesaApi.Services
             return MapToTableResponse(table);
         }
 
-        public async Task DeleteTableAsync(int tableId, ClaimsPrincipal user, string tenantKey)
+        public async Task DeleteTableAsync(Guid tableId, ClaimsPrincipal user, string tenantKey)
         {
             if (string.IsNullOrEmpty(tenantKey))
                 throw new ArgumentException("Tenant key is missing.");
@@ -129,11 +133,10 @@ namespace MesaApi.Services
             _logger.LogInformation("Table {TableId} deleted by {User}", tableId, user.Identity?.Name);
         }
 
-        private string GenerateQRCodeUrl(string tableNumber)
+        private string GenerateQRCodeUrl(Guid tableId)
         {
             var tenantSlug = _tenantContext.Slug;
-            var baseUrl = $"http://localhost.{tenantSlug}:8000";
-            return $"{baseUrl}/?tableId={tableNumber}";
+            return $"https://mesamagica.app/?tenantSlug={tenantSlug}&tableId={tableId}";
         }
 
         private TableResponse MapToTableResponse(RestaurantTable table)

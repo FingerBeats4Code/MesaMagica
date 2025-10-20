@@ -6,7 +6,6 @@ using System.Security.Claims;
 
 namespace MesaApi.Services
 {
-    //------------------changes for removing duplicate validation code----------------------
     public abstract class TenantAwareService
     {
         protected readonly ApplicationDbContext _dbContext;
@@ -28,13 +27,11 @@ namespace MesaApi.Services
             if (!user.IsInRole(Roles.Admin))
                 throw new UnauthorizedAccessException("Admin role required.");
 
-            //------------------changes for consistent tenant validation from JWT----------------------
             var userTenantKey = user.FindFirst(JwtClaims.TenantKey)?.Value;
             if (string.IsNullOrEmpty(userTenantKey) || userTenantKey != tenantKey)
                 throw new UnauthorizedAccessException("Tenant mismatch in JWT token.");
-            //------------------end changes----------------------
 
-            var userIdClaim = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var userIdClaim = user.FindFirst(JwtClaims.UserId)?.Value; // CHANGED
             if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
                 throw new UnauthorizedAccessException("Invalid user ID in token.");
 
@@ -49,13 +46,10 @@ namespace MesaApi.Services
 
         protected string GetTenantKeyFromUser(ClaimsPrincipal user)
         {
-            //------------------changes for consistent tenant key retrieval----------------------
             var tenantKey = user.FindFirst(JwtClaims.TenantKey)?.Value;
             if (string.IsNullOrEmpty(tenantKey))
                 throw new UnauthorizedAccessException("Tenant key not found in JWT token.");
             return tenantKey;
-            //------------------end changes----------------------
         }
     }
-    //------------------end changes----------------------
 }

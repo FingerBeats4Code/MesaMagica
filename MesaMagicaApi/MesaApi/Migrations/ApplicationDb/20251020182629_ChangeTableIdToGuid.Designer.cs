@@ -12,8 +12,8 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace MesaApi.Migrations.ApplicationDb
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20251015224307_AddTableSeataddedsessioncnt")]
-    partial class AddTableSeataddedsessioncnt
+    [Migration("20251020182629_ChangeTableIdToGuid")]
+    partial class ChangeTableIdToGuid
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -169,11 +169,9 @@ namespace MesaApi.Migrations.ApplicationDb
 
             modelBuilder.Entity("MesaApi.Models.RestaurantTable", b =>
                 {
-                    b.Property<int>("TableId")
+                    b.Property<Guid>("TableId")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("TableId"));
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -221,8 +219,8 @@ namespace MesaApi.Migrations.ApplicationDb
                     b.Property<DateTime>("StartedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("TableId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("TableId")
+                        .HasColumnType("uuid");
 
                     b.HasKey("SessionId");
 

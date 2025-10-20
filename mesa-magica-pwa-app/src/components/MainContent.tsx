@@ -4,8 +4,9 @@ import Menu from "@/components/Menu";
 import Cart from "@/components/Cart";
 import Order from "@/components/Order";
 import { useSearchParams } from 'react-router-dom';
+import MyOrders from '@/components/MyOrders';
 import { getCategories, getMenuItems, submitOrder, addToCartBackend, removeFromCartBackend, getCart, Category, MenuItemResponse, CartItem } from "@/api/api";
-
+//const [showOrders, setShowOrders] = useState(false);
 interface FoodCardProps {
   name: string;
   price: string;

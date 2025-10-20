@@ -1,13 +1,12 @@
 ﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
-using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
 namespace MesaApi.Migrations.ApplicationDb
 {
     /// <inheritdoc />
-    public partial class AddTableSeataddedsessioncnt : Migration
+    public partial class ChangeTableIdToGuid : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -30,8 +29,7 @@ namespace MesaApi.Migrations.ApplicationDb
                 name: "RestaurantTables",
                 columns: table => new
                 {
-                    TableId = table.Column<int>(type: "integer", nullable: false)
-                        .Annotation("Npgsql:ValueGenerationStrategy", NpgsqlValueGenerationStrategy.IdentityByDefaultColumn),
+                    TableId = table.Column<Guid>(type: "uuid", nullable: false),
                     TableNumber = table.Column<string>(type: "text", nullable: false),
                     QRCodeUrl = table.Column<string>(type: "text", nullable: false),
                     IsOccupied = table.Column<bool>(type: "boolean", nullable: false),
@@ -98,7 +96,7 @@ namespace MesaApi.Migrations.ApplicationDb
                 columns: table => new
                 {
                     SessionId = table.Column<Guid>(type: "uuid", nullable: false),
-                    TableId = table.Column<int>(type: "integer", nullable: false),
+                    TableId = table.Column<Guid>(type: "uuid", nullable: false),
                     SessionToken = table.Column<Guid>(type: "uuid", nullable: false),
                     IsActive = table.Column<bool>(type: "boolean", nullable: false),
                     StartedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),

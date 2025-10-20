@@ -87,7 +87,7 @@ public class AuthService : IAuthService
         if (string.IsNullOrEmpty(tenantSlug))
             throw new ArgumentException("Tenant slug is missing.");
 
-        var userIdClaim = userPrincipal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        var userIdClaim = userPrincipal.FindFirst(JwtClaims.UserId)?.Value; // CHANGED
         if (string.IsNullOrEmpty(userIdClaim) || !Guid.TryParse(userIdClaim, out var userId))
             throw new UnauthorizedAccessException("Invalid user ID in token.");
 
@@ -96,11 +96,9 @@ public class AuthService : IAuthService
         if (user == null)
             throw new UnauthorizedAccessException("User not found or inactive.");
 
-        //------------------changes for consistent tenant validation from JWT----------------------
         var userTenantSlug = userPrincipal.FindFirst(JwtClaims.TenantSlug)?.Value;
         if (userTenantSlug != tenantSlug)
             throw new UnauthorizedAccessException("Tenant mismatch in request.");
-        //------------------end changes----------------------
 
         if (!BCrypt.Net.BCrypt.Verify(request.CurrentPassword, user.PasswordHash))
         {
@@ -123,13 +121,13 @@ public class AuthService : IAuthService
     {
         var claims = new[]
         {
-            new Claim(JwtRegisteredClaimNames.Sub, user.Username),
-            new Claim(ClaimTypes.NameIdentifier, user.UserId.ToString()),
-            new Claim(ClaimTypes.Role, user.Role),
-            new Claim(JwtClaims.TenantSlug, tenantSlug),
-            new Claim(JwtClaims.TenantKey, _tenantContext.TenantKey),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-        };
+        new Claim(ClaimTypes.Name, user.Username), // Username goes here
+        new Claim(JwtClaims.UserId, user.UserId.ToString()), // Custom claim for UserId
+        new Claim(ClaimTypes.Role, user.Role),
+        new Claim(JwtClaims.TenantSlug, tenantSlug),
+        new Claim(JwtClaims.TenantKey, _tenantContext.TenantKey),
+        new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+    };
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -138,7 +136,7 @@ public class AuthService : IAuthService
             issuer: _configuration["Jwt:Issuer"],
             audience: _configuration["Jwt:Audience"],
             claims: claims,
-            expires: DateTime.UtcNow.AddHours(2), // Reduced from 12 hours
+            expires: DateTime.UtcNow.AddHours(2),
             signingCredentials: creds);
 
         return new JwtSecurityTokenHandler().WriteToken(token);

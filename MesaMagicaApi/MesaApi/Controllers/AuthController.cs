@@ -1,10 +1,12 @@
 ﻿// MesaMagicaApi/MesaApi/Controllers/AuthController.cs
+using MesaApi.Common;
 using MesaApi.Models;
 using MesaApi.Multitenancy;
 using MesaApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.ComponentModel.DataAnnotations;
+using System.Security.Claims;
 
 namespace MesaApi.Controllers
 {
@@ -135,8 +137,8 @@ namespace MesaApi.Controllers
         public IActionResult GetCurrentUser()
         {
             var username = User.Identity?.Name;
-            var role = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.Role)?.Value;
-            var userId = User.Claims.FirstOrDefault(c => c.Type == System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            var role = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value;
+            var userId = User.Claims.FirstOrDefault(c => c.Type == JwtClaims.UserId)?.Value; // CHANGED
 
             return Ok(new
             {

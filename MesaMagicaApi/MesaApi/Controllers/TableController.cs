@@ -22,7 +22,6 @@ namespace MesaApi.Controllers
             _logger = logger;
         }
 
-        // POST: api/admin/tables/create
         [HttpPost("create")]
         public async Task<IActionResult> CreateTable([FromBody] CreateTableRequest request)
         {
@@ -46,7 +45,6 @@ namespace MesaApi.Controllers
             }
         }
 
-        // GET: api/admin/tables
         [HttpGet]
         public async Task<IActionResult> GetTables()
         {
@@ -66,9 +64,8 @@ namespace MesaApi.Controllers
             }
         }
 
-        // GET: api/admin/tables/{tableId}
         [HttpGet("{tableId}")]
-        public async Task<IActionResult> GetTable(int tableId)
+        public async Task<IActionResult> GetTable(Guid tableId) // CHANGED from int
         {
             var tenantKey = User.FindFirst(JwtClaims.TenantKey)?.Value;
             if (string.IsNullOrEmpty(tenantKey))
@@ -90,9 +87,8 @@ namespace MesaApi.Controllers
             }
         }
 
-        // PUT: api/admin/tables/{tableId}
         [HttpPut("{tableId}")]
-        public async Task<IActionResult> UpdateTable(int tableId, [FromBody] UpdateTableRequest request)
+        public async Task<IActionResult> UpdateTable(Guid tableId, [FromBody] UpdateTableRequest request) // CHANGED from int
         {
             var tenantKey = User.FindFirst(JwtClaims.TenantKey)?.Value;
             if (string.IsNullOrEmpty(tenantKey))
@@ -114,9 +110,8 @@ namespace MesaApi.Controllers
             }
         }
 
-        // DELETE: api/admin/tables/{tableId}
         [HttpDelete("{tableId}")]
-        public async Task<IActionResult> DeleteTable(int tableId)
+        public async Task<IActionResult> DeleteTable(Guid tableId) // CHANGED from int
         {
             var tenantKey = User.FindFirst(JwtClaims.TenantKey)?.Value;
             if (string.IsNullOrEmpty(tenantKey))
@@ -139,11 +134,10 @@ namespace MesaApi.Controllers
         }
     }
 
-    // Request/Response Models
     public class CreateTableRequest
     {
         [Required]
-        public string TableNumber { get; set; } = string.Empty;
+        public string TableNumber { get; set; } = string.Empty; // "T1", "Table 1", etc.
 
         [Range(1, 20)]
         public int SeatCapacity { get; set; } = 4;
@@ -158,7 +152,7 @@ namespace MesaApi.Controllers
 
     public class TableResponse
     {
-        public int TableId { get; set; }
+        public Guid TableId { get; set; } // CHANGED from int
         public string TableNumber { get; set; } = string.Empty;
         public string QRCodeUrl { get; set; } = string.Empty;
         public int SeatCapacity { get; set; }

@@ -31,7 +31,7 @@ public class SessionService : ISessionService
         _logger = logger;
     }
 
-    public async Task<(TableSession session, string jwt)> StartSessionAsync(int tableId, CancellationToken ct = default)
+    public async Task<(TableSession session, string jwt)> StartSessionAsync(Guid tableId, CancellationToken ct = default)
     {
         var tenantContext = _httpContextAccessor.HttpContext?.Items["TenantContext"] as ITenantContext
             ?? throw new InvalidOperationException("Tenant context not resolved.");
@@ -42,7 +42,6 @@ public class SessionService : ISessionService
         var table = await _db.RestaurantTables.FirstOrDefaultAsync(t => t.TableId == tableId, ct)
                     ?? throw new InvalidOperationException("Table not found");
 
-        //------------------changes for fixing race condition with database-level concurrency control----------------------
         var seatSize = table.TableSeatSize > 0 ? table.TableSeatSize : 1;
 
         // Try to find and increment existing active session with concurrency control
@@ -77,7 +76,6 @@ public class SessionService : ISessionService
             var existingJwt = GenerateJwt(activeSession.SessionId, table.TableId, tenantContext.TenantKey);
             return (activeSession, existingJwt);
         }
-        //------------------end changes----------------------
 
         // Create new session if none active
         var newSession = new TableSession
@@ -104,8 +102,7 @@ public class SessionService : ISessionService
         => _db.TableSessions.Include(s => s.Table)
             .FirstOrDefaultAsync(s => s.SessionId == sessionId && s.IsActive, ct);
 
-    //------------------changes for using constants instead of magic strings----------------------
-    private string GenerateJwt(Guid sessionId, int tableId, string tenantKey)
+    private string GenerateJwt(Guid sessionId, Guid tableId, string tenantKey)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.Key));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -114,7 +111,7 @@ public class SessionService : ISessionService
         {
             new Claim(JwtClaims.TenantKey, tenantKey),
             new Claim(JwtClaims.SessionId, sessionId.ToString()),
-            new Claim(JwtClaims.TableId, tableId.ToString()),
+            new Claim(JwtClaims.TableId, tableId.ToString()), // Now Guid
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 
@@ -128,5 +125,4 @@ public class SessionService : ISessionService
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
-    //------------------end changes----------------------
 }

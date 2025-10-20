@@ -3,13 +3,12 @@
     public class TableSession
     {
         public Guid SessionId { get; set; }
-        public int TableId { get; set; }
+        public Guid TableId { get; set; } // CHANGED from int
         public RestaurantTable? Table { get; set; }
         public Guid SessionToken { get; set; } = Guid.NewGuid();
         public bool IsActive { get; set; } = true;
         public DateTime StartedAt { get; set; } = DateTime.UtcNow;
         public DateTime? EndedAt { get; set; }
-        // Navigation property for CartItems
         public ICollection<CartItem> CartItems { get; set; } = new List<CartItem>();
         public int SessionCount { get; set; } = 0;
 

@@ -2,11 +2,11 @@
 {
     public class RestaurantTable
     {
-        public int TableId { get; set; }
-        public string TableNumber { get; set; } = null!;
+        public Guid TableId { get; set; } = Guid.NewGuid(); // CHANGED from int
+        public string TableNumber { get; set; } = null!; // Display name like "T1", "Table 1", etc.
         public string QRCodeUrl { get; set; } = null!;
         public bool IsOccupied { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-        public int TableSeatSize { get; set; } = 4; // default value if not specified
+        public int TableSeatSize { get; set; } = 4;
     }
 }

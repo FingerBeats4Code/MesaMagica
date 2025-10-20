@@ -82,6 +82,7 @@ namespace MesaApi.Services
                 orderId, status, user.Identity?.Name);
         }
 
+        // MesaMagicaApi/MesaApi/Services/AdminService.cs (verify this exists)
         public async Task EditOrderAsync(Guid orderId, List<EditOrderItemRequest> items, ClaimsPrincipal user, string tenantKey)
         {
             if (string.IsNullOrEmpty(tenantKey))

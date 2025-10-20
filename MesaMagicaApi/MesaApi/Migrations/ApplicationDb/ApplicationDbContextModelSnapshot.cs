@@ -166,11 +166,9 @@ namespace MesaApi.Migrations.ApplicationDb
 
             modelBuilder.Entity("MesaApi.Models.RestaurantTable", b =>
                 {
-                    b.Property<int>("TableId")
+                    b.Property<Guid>("TableId")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("TableId"));
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -218,8 +216,8 @@ namespace MesaApi.Migrations.ApplicationDb
                     b.Property<DateTime>("StartedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("TableId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("TableId")
+                        .HasColumnType("uuid");
 
                     b.HasKey("SessionId");
 

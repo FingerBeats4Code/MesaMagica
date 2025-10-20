@@ -21,6 +21,7 @@
         public const string TenantSlug = "tenantSlug";
         public const string SessionId = "sessionId";
         public const string TableId = "tableId";
+        public const string UserId = "userId"; // ADD THIS
     }
     //------------------end changes----------------------
 }

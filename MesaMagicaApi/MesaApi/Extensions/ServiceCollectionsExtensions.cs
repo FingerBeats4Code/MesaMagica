@@ -1,4 +1,5 @@
-﻿using MesaApi.Interface;
+﻿// MesaMagicaApi/MesaApi/Extensions/ServiceCollectionsExtensions.cs
+using MesaApi.Interface;
 using MesaApi.Models;
 using MesaApi.Multitenancy;
 using MesaApi.Services;
@@ -35,6 +36,7 @@ namespace MesaMagica.Api.Extensions
             });
             //------------------end changes----------------------
 
+            // Register all services
             services.AddScoped<ISessionService, SessionService>();
             services.AddSingleton<ILoggingService, LoggingService>();
             services.AddScoped<IOrderService, OrderService>();
@@ -43,6 +45,11 @@ namespace MesaMagica.Api.Extensions
             services.AddScoped<IUsersService, UsersService>();
             services.AddScoped<IAuthService, AuthService>();
             services.AddScoped<ICartService, CartService>();
+
+            // ADD THESE MISSING SERVICES
+            services.AddScoped<IAdminService, AdminService>();
+            services.AddScoped<ITableService, TableService>();
+
             services.AddHttpClient();
 
             //------------------changes for dynamic Redis configuration----------------------

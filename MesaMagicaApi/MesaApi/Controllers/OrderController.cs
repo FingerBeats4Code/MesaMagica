@@ -1,8 +1,9 @@
-﻿using MesaApi.Models;
+﻿using MesaApi.Common;
+using MesaApi.Models;
 using MesaApi.Multitenancy;
 using MesaApi.Services;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 [ApiController]
 [Route("api/orders")]
 [Authorize]
@@ -61,5 +62,27 @@ public class OrdersController : ControllerBase
 
         var response = await _orderService.UpdateOrderItemsAsync(id, request, User, tenantKey);
         return Ok(response);
+    }
+
+    // NEW: Get order summary for current session
+    [HttpGet("my-orders")]
+    public async Task<IActionResult> GetMyOrders()
+    {
+        var tenantKey = User.FindFirst(JwtClaims.TenantKey)?.Value;
+        var sessionIdClaim = User.FindFirst(JwtClaims.SessionId)?.Value;
+
+        if (string.IsNullOrEmpty(tenantKey) || !Guid.TryParse(sessionIdClaim, out var sessionId))
+            return BadRequest("Invalid session");
+
+        try
+        {
+            var orders = await _orderService.GetOrdersBySessionAsync(sessionId, User, tenantKey);
+            return Ok(orders);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error fetching orders for session {SessionId}", sessionId);
+            return StatusCode(500, "Error fetching orders");
+        }
     }
 }

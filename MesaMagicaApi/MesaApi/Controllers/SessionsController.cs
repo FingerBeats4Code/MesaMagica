@@ -18,7 +18,7 @@ public class SessionResponse
 
 public class StartSessionRequest
 {
-    public string TableId { get; set; } = string.Empty;
+    public string TableId { get; set; } = string.Empty; // Now accepts Guid as string
     public string QRCodeUrl { get; set; } = string.Empty;
 }
 
@@ -29,19 +29,18 @@ public class SessionsController : ControllerBase
     private readonly CatalogDbContext _catalogDbContext;
     private readonly ApplicationDbContext _applicationDbContext;
     private readonly ILogger<SessionsController> _logger;
-    private readonly ISessionService _sessionService; //----------------------------- changes -----------------------------
+    private readonly ISessionService _sessionService;
 
     public SessionsController(
         CatalogDbContext catalogDbContext,
         ApplicationDbContext applicationDbContext,
         ILogger<SessionsController> logger,
-        ISessionService sessionService //----------------------------- changes -----------------------------
-    )
+        ISessionService sessionService)
     {
         _catalogDbContext = catalogDbContext;
         _applicationDbContext = applicationDbContext;
         _logger = logger;
-        _sessionService = sessionService; //----------------------------- changes -----------------------------
+        _sessionService = sessionService;
     }
 
     [HttpPost("start")]
@@ -51,7 +50,7 @@ public class SessionsController : ControllerBase
     [SwaggerResponse(401, "Tenant not found, inactive, or invalid key")]
     [SwaggerResponse(403, "License is invalid or expired")]
     [SwaggerResponse(404, "Table not found or inactive")]
-    public async Task<IActionResult> StartSession([FromBody] StartSessionRequest request, CancellationToken ct) //----------------------------- changes: added CancellationToken -----------------------------
+    public async Task<IActionResult> StartSession([FromBody] StartSessionRequest request, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(request.QRCodeUrl))
         {
@@ -64,19 +63,20 @@ public class SessionsController : ControllerBase
             var uri = new Uri(request.QRCodeUrl);
             var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
 
-            if (string.IsNullOrEmpty(request.TableId))
+            var tableIdStr = query["tableId"] ?? request.TableId;
+
+            if (string.IsNullOrEmpty(tableIdStr))
             {
                 _logger.LogWarning("Invalid QR code format. URL: {QRCodeUrl}", request.QRCodeUrl);
                 return BadRequest("Invalid QR code format. Must contain tableId.");
             }
 
-            if (!int.TryParse(request.TableId, out var tableId))
+            if (!Guid.TryParse(tableIdStr, out var tableId)) // CHANGED: Parse as Guid
             {
                 _logger.LogWarning("Invalid tableId in QR code. URL: {QRCodeUrl}", request.QRCodeUrl);
                 return BadRequest("Invalid tableId in QR code.");
             }
 
-            //----------------------------- changes: delegate session start & jwt generation to SessionService -----------------------------
             var (session, jwt) = await _sessionService.StartSessionAsync(tableId, ct);
 
             return Ok(new SessionResponse
@@ -92,3 +92,4 @@ public class SessionsController : ControllerBase
         }
     }
 }
+
