@@ -702,4 +702,73 @@ export const getMyOrders = async (): Promise<OrderResponse[]> => {
   }
 };
 
+// mesa-magica-pwa-app/src/api/api.ts
+// Add this function to your existing api.ts file
+
+// ==================== SESSION MANAGEMENT ====================
+
+/**
+ * Close a session and free the table
+ * This should be called when an order is marked as closed
+ */
+export const closeSession = async (sessionId: string): Promise<void> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🔒 Closing session: ${sessionId}`);
+    await api.post('/api/Sessions/close', { sessionId });
+    console.log(`[${new Date().toISOString()}] ✅ Session closed successfully`);
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error closing session:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+/**
+ * Get session details
+ */
+export const getSessionDetails = async (sessionId: string): Promise<any> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 📋 Fetching session details: ${sessionId}`);
+    const response = await api.get(`/api/Sessions/${sessionId}`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching session details:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// ==================== UPDATED ORDER ENDPOINTS ====================
+
+/**
+ * Update order status and close session if status is "Closed"
+ */
+export const updateOrderStatusWithSession = async (payload: UpdateOrderRequest): Promise<void> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 📝 Updating order status for orderId: ${payload.orderId} to ${payload.status}`);
+    
+    // Update the order status
+    await api.put('/api/admin/order/update', payload);
+    console.log(`[${new Date().toISOString()}] ✅ Order status updated successfully`);
+    
+    // If status is "Closed", we should close the session
+    if (payload.status.toLowerCase() === "closed") {
+      try {
+        // First, get the order details to find the session
+        const orderResponse = await api.get(`/api/admin/order/${payload.orderId}`);
+        const sessionId = orderResponse.data.sessionId;
+        
+        if (sessionId) {
+          console.log(`[${new Date().toISOString()}] 🔒 Closing session ${sessionId} for closed order ${payload.orderId}`);
+          await closeSession(sessionId);
+        }
+      } catch (sessionError) {
+        console.error(`[${new Date().toISOString()}] ⚠️ Could not close session for order ${payload.orderId}:`, sessionError);
+        // Don't throw error here - order is still closed even if session close fails
+      }
+    }
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error updating order status:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
 export default api;

@@ -1,12 +1,11 @@
+// mesa-magica-pwa-app/src/components/MainContent.tsx
 import React, { useState, useEffect } from "react";
 import { useAppContext } from "@/context/AppContext";
 import Menu from "@/components/Menu";
-import Cart from "@/components/Cart";
-import Order from "@/components/Order";
-import { useSearchParams } from 'react-router-dom';
 import MyOrders from '@/components/MyOrders';
+import { useSearchParams } from 'react-router-dom';
 import { getCategories, getMenuItems, submitOrder, addToCartBackend, removeFromCartBackend, getCart, Category, MenuItemResponse, CartItem } from "@/api/api";
-//const [showOrders, setShowOrders] = useState(false);
+
 interface FoodCardProps {
   name: string;
   price: string;
@@ -60,7 +59,16 @@ const FoodCard: React.FC<FoodCardProps> = ({ name, price, description, imageSrc,
   );
 };
 
-const MainContent: React.FC = () => {
+interface MainContentProps {
+  showCart: boolean;
+  onCloseCart: () => void;
+  showOrders: boolean;
+  onCloseOrders: () => void;
+  cart: CartItem[];
+  onCartUpdate: () => void;
+}
+
+const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOrders, onCloseOrders, cart: externalCart, onCartUpdate }) => {
   const [searchParams] = useSearchParams();
   const tableId = searchParams.get('tableId') || 'default-table-id';
   const [categories, setCategories] = useState<Category[]>([]);
@@ -72,18 +80,20 @@ const MainContent: React.FC = () => {
 
   const { jwt, sessionId, tenantSlug } = useAppContext();
 
-  // Reset state when tableId changes
+  // Sync with external cart
+  useEffect(() => {
+    setCart(externalCart);
+  }, [externalCart]);
+
   useEffect(() => {
     console.log(`[${new Date().toISOString()}] TableId changed to: ${tableId} - resetting state`);
     setCategories([]);
     setMenuItems([]);
-    setCart([]);
     setSelectedCategory(null);
     setLoading(true);
     setError(null);
   }, [tableId]);
 
-  // Fetch initial data when session is ready
   useEffect(() => {
     if (!jwt || !sessionId) {
       console.log(`[${new Date().toISOString()}] Waiting for session initialization...`);
@@ -97,17 +107,15 @@ const MainContent: React.FC = () => {
       console.log(`[${new Date().toISOString()}] Fetching initial data for tenant: ${tenantSlug}, tableId: ${tableId}, sessionId: ${sessionId}`);
       
       try {
-        const [cats, items, cartData] = await Promise.all([
+        const [cats, items] = await Promise.all([
           getCategories(),
-          getMenuItems(selectedCategory ?? undefined),
-          getCart(sessionId)
+          getMenuItems(selectedCategory ?? undefined)
         ]);
         
         setCategories(cats);
         setMenuItems(items);
-        setCart(cartData);
         
-        console.log(`[${new Date().toISOString()}] ✅ Data loaded - Categories: ${cats.length}, Items: ${items.length}, Cart items: ${cartData.length}`);
+        console.log(`[${new Date().toISOString()}] ✅ Data loaded - Categories: ${cats.length}, Items: ${items.length}`);
       } catch (error) {
         console.error('Failed to fetch initial data:', error);
         setError('Failed to load menu. Please try refreshing the page.');
@@ -118,23 +126,6 @@ const MainContent: React.FC = () => {
 
     fetchInitialData();
   }, [jwt, sessionId, selectedCategory, tenantSlug, tableId]);
-
-  // Poll for cart updates when cart has items
-  useEffect(() => {
-    if (!jwt || !sessionId || cart.length === 0) return;
-
-    const fetchCart = async () => {
-      try {
-        const cartData = await getCart(sessionId);
-        setCart(cartData);
-      } catch (error) {
-        console.error('Failed to fetch cart:', error);
-      }
-    };
-
-    const interval = setInterval(fetchCart, 30000); // Poll every 30 seconds
-    return () => clearInterval(interval);
-  }, [jwt, sessionId, cart.length]);
 
   const handleCategorySelect = (categoryId: string | null) => {
     setSelectedCategory(categoryId);
@@ -147,8 +138,7 @@ const MainContent: React.FC = () => {
     }
     try {
       await addToCartBackend(sessionId, item.itemId, 1);
-      const updatedCart = await getCart(sessionId);
-      setCart(updatedCart);
+      onCartUpdate();
     } catch (error) {
       alert('Error adding to cart');
     }
@@ -161,8 +151,7 @@ const MainContent: React.FC = () => {
     }
     try {
       await addToCartBackend(sessionId, itemId, 1);
-      const updatedCart = await getCart(sessionId);
-      setCart(updatedCart);
+      onCartUpdate();
     } catch (error) {
       alert('Error updating cart');
     }
@@ -175,8 +164,7 @@ const MainContent: React.FC = () => {
     }
     try {
       await removeFromCartBackend(sessionId, itemId);
-      const updatedCart = await getCart(sessionId);
-      setCart(updatedCart);
+      onCartUpdate();
     } catch (error) {
       alert('Error updating cart');
     }
@@ -190,13 +178,13 @@ const MainContent: React.FC = () => {
     try {
       const orderResponse = await submitOrder(sessionId, { tableId });
       alert(`Order submitted successfully! Order ID: ${orderResponse.orderId}`);
-      setCart([]);
+      onCartUpdate();
+      onCloseCart();
     } catch (error) {
       alert('Error submitting order');
     }
   };
 
-  // Show loading state while initializing
   if (!jwt || !sessionId) {
     return (
       <main className="mx-auto px-8 relative z-20 max-w-7xl">
@@ -210,7 +198,6 @@ const MainContent: React.FC = () => {
     );
   }
 
-  // Show loading state while fetching data
   if (loading) {
     return (
       <main className="mx-auto px-8 relative z-20 max-w-7xl">
@@ -224,7 +211,6 @@ const MainContent: React.FC = () => {
     );
   }
 
-  // Show error state
   if (error) {
     return (
       <main className="mx-auto px-8 relative z-20 max-w-7xl">
@@ -244,66 +230,164 @@ const MainContent: React.FC = () => {
   }
 
   return (
-    <main className="mx-auto px-8 relative z-20 max-w-7xl">
-      <div className="text-center py-16">
-        <div className="space-y-6">
-          <div className="items-center px-4 py-2 rounded-full bg-white/70 text-sm dark:bg-white/10 inline-flex gap-2 border border-zinc-300/70 dark:border-white/20">
-            <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-            <span className="text-gray-700 dark:text-neutral-300">Fresh &amp; Delicious</span>
-          </div>
-          <p className="text-4xl font-bold leading-tight lg:text-6xl">{tenantSlug} Food Menu</p>
-          <p className="text-lg text-gray-700/80 mx-auto dark:text-neutral-300/80 max-w-2xl">
-            Discover our carefully crafted menu featuring fresh ingredients and authentic flavors. Order your favorites and enjoy fast delivery.
-          </p>
-        </div>
-      </div>
-      
-      <div className="lg:grid-cols-4 mb-16 grid gap-8">
-        <div className="lg:col-span-1">
-          <div className="sticky top-8">
-            <Menu
-              categories={categories}
-              selectedCategory={selectedCategory}
-              onCategorySelect={handleCategorySelect}
-            />
-            <Cart
-              cart={cart}
-              handleAddToCart={handleAddToCart}
-              handleIncrement={handleIncrement}
-              handleDecrement={handleDecrement}
-            />
-            <Order
-              cart={cart}
-              handlePlaceOrder={handlePlaceOrder}
-            />
+    <>
+      <main className="mx-auto px-8 relative z-20 max-w-7xl">
+        <div className="text-center py-16">
+          <div className="space-y-6">
+            <div className="items-center px-4 py-2 rounded-full bg-white/70 text-sm dark:bg-white/10 inline-flex gap-2 border border-zinc-300/70 dark:border-white/20">
+              <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+              <span className="text-gray-700 dark:text-neutral-300">Fresh &amp; Delicious</span>
+            </div>
+            <p className="text-4xl font-bold leading-tight lg:text-6xl">{tenantSlug} Food Menu</p>
+            <p className="text-lg text-gray-700/80 mx-auto dark:text-neutral-300/80 max-w-2xl">
+              Discover our carefully crafted menu featuring fresh ingredients and authentic flavors. Order your favorites and enjoy fast delivery.
+            </p>
           </div>
         </div>
         
-        <div className="lg:col-span-3">
-          {menuItems.length === 0 ? (
-            <div className="text-center py-12">
-              <p className="text-lg text-gray-600 dark:text-neutral-400">No menu items available</p>
+        <div className="lg:grid-cols-4 mb-16 grid gap-8">
+          <div className="lg:col-span-1">
+            <div className="sticky top-8">
+              <Menu
+                categories={categories}
+                selectedCategory={selectedCategory}
+                onCategorySelect={handleCategorySelect}
+              />
             </div>
-          ) : (
-            <div className="md:grid-cols-2 grid gap-6">
-              {menuItems.map((item) => (
-                <FoodCard
-                  key={item.itemId}
-                  name={item.name || 'Unnamed Item'}
-                  price={`$${item.price.toFixed(2)}`}
-                  description={item.description || 'No description available'}
-                  imageSrc={item.imageUrl || 'https://placehold.co/400x240/cccccc/ffffff?text=No+Image'}
-                  onAddToCart={() => handleAddToCart(item)}
-                  onIncrement={() => handleIncrement(item.itemId)}
-                  onDecrement={() => handleDecrement(item.itemId)}
-                  quantity={cart.find((cartItem) => cartItem.menuItem.itemId === item.itemId)?.quantity || 0}
-                />
-              ))}
-            </div>
-          )}
+          </div>
+          
+          <div className="lg:col-span-3">
+            {menuItems.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-lg text-gray-600 dark:text-neutral-400">No menu items available</p>
+              </div>
+            ) : (
+              <div className="md:grid-cols-2 grid gap-6">
+                {menuItems.map((item) => (
+                  <FoodCard
+                    key={item.itemId}
+                    name={item.name || 'Unnamed Item'}
+                    price={`$${item.price.toFixed(2)}`}
+                    description={item.description || 'No description available'}
+                    imageSrc={item.imageUrl || 'https://placehold.co/400x240/cccccc/ffffff?text=No+Image'}
+                    onAddToCart={() => handleAddToCart(item)}
+                    onIncrement={() => handleIncrement(item.itemId)}
+                    onDecrement={() => handleDecrement(item.itemId)}
+                    quantity={cart.find((cartItem) => cartItem.menuItem.itemId === item.itemId)?.quantity || 0}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-    </main>
+      </main>
+
+      {/* Cart Modal */}
+      {showCart && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-4" onClick={onCloseCart}>
+          <div className="bg-white dark:bg-neutral-900 rounded-t-xl sm:rounded-xl w-full max-w-lg max-h-[80vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-6 border-b border-zinc-300/70 dark:border-white/20">
+              <h2 className="text-2xl font-bold">Your Cart</h2>
+              <button 
+                onClick={onCloseCart}
+                className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6">
+              {cart.length === 0 ? (
+                <div className="text-center py-12">
+                  <svg className="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                  </svg>
+                  <p className="text-gray-600 dark:text-neutral-400">Your cart is empty</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {cart.map(({ menuItem, quantity }, idx) => (
+                    <div key={idx} className="flex items-center gap-4 p-4 bg-white/50 dark:bg-neutral-800/50 rounded-lg">
+                      <img 
+                        src={menuItem.imageUrl || 'https://placehold.co/80x80/cccccc/ffffff?text=No+Image'} 
+                        alt={menuItem.name}
+                        className="w-20 h-20 object-cover rounded-lg"
+                      />
+                      <div className="flex-1">
+                        <p className="font-semibold">{menuItem.name}</p>
+                        <p className="text-sm text-gray-600 dark:text-neutral-400">
+                          ${menuItem.price.toFixed(2)} x {quantity}
+                        </p>
+                        <div className="flex items-center gap-2 mt-2">
+                          <button
+                            onClick={() => handleDecrement(menuItem.itemId)}
+                            className="w-6 h-6 rounded-full border border-zinc-300/70 dark:border-white/20 flex items-center justify-center hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                          >
+                            -
+                          </button>
+                          <span className="w-8 text-center">{quantity}</span>
+                          <button
+                            onClick={() => handleIncrement(menuItem.itemId)}
+                            className="w-6 h-6 rounded-full border border-zinc-300/70 dark:border-white/20 flex items-center justify-center hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-bold">${(menuItem.price * quantity).toFixed(2)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {cart.length > 0 && (
+              <div className="p-6 border-t border-zinc-300/70 dark:border-white/20">
+                <div className="flex items-center justify-between mb-4">
+                  <span className="text-lg font-semibold">Total</span>
+                  <span className="text-2xl font-bold text-orange-600">
+                    ${cart.reduce((sum, { menuItem, quantity }) => sum + menuItem.price * quantity, 0).toFixed(2)}
+                  </span>
+                </div>
+                <button
+                  onClick={handlePlaceOrder}
+                  className="w-full bg-neutral-900 dark:bg-orange-500 text-white py-3 rounded-lg font-medium hover:bg-neutral-700 dark:hover:bg-orange-600 transition-colors"
+                >
+                  Place Order
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Orders Modal */}
+      {showOrders && (
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-4" onClick={onCloseOrders}>
+          <div className="bg-white dark:bg-neutral-900 rounded-t-xl sm:rounded-xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-6 border-b border-zinc-300/70 dark:border-white/20">
+              <h2 className="text-2xl font-bold">My Orders</h2>
+              <button 
+                onClick={onCloseOrders}
+                className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-lg transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-6">
+              <MyOrders />
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 
