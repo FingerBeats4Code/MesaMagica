@@ -3,10 +3,10 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace MesaApi.Migrations.Catalog
+namespace MesaApi.Migrations
 {
     /// <inheritdoc />
-    public partial class AddTenantKeyAndLicense : Migration
+    public partial class InitialCatalogMigration : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)

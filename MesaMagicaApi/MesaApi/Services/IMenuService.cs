@@ -10,5 +10,6 @@ namespace MesaApi.Services
         Task DeleteMenuItemAsync(Guid itemId, ClaimsPrincipal user, string tenantSlug);
         Task<List<MenuItemResponse>> GetMenuItemsAsync(string tenantSlug);
         Task<MenuItemResponse> GetMenuItemAsync(Guid itemId, string tenantSlug);
+        Task<List<MenuItemResponse>> GetMenuItemsByCategoryAsync(Guid categoryId, string tenantSlug);
     }
 }

@@ -1,8 +1,10 @@
-﻿using MesaApi.Models;
+﻿using MesaApi.Common;
+using MesaApi.Models;
 using MesaApi.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MesaApi.Multitenancy;
+using System.Security.Claims;
 
 namespace MesaApi.Controllers
 {
@@ -19,16 +21,19 @@ namespace MesaApi.Controllers
             _tenantContext = tenantContext ?? throw new ArgumentNullException(nameof(tenantContext));
         }
 
+        // ---------------- Admin APIs ----------------
+
         [HttpPost("items")]
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<MenuItemResponse>> CreateMenuItem([FromBody] CreateMenuItemRequest request)
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            //------------------changes for consistent tenant validation from JWT only----------------------
+            var tenantKey = User.FindFirst(JwtClaims.TenantKey)?.Value;
+            if (tenantKey == null) return Unauthorized("Tenant not found in JWT.");
 
             try
             {
-                var menuItem = await _menuService.CreateMenuItemAsync(request, User, _tenantContext.Slug);
+                var menuItem = await _menuService.CreateMenuItemAsync(request, User, tenantKey);
                 return CreatedAtAction(nameof(GetMenuItem), new { id = menuItem.ItemId }, menuItem);
             }
             catch (ArgumentException ex)
@@ -39,18 +44,20 @@ namespace MesaApi.Controllers
             {
                 return Unauthorized(ex.Message);
             }
+            //------------------end changes----------------------
         }
 
         [HttpPut("items/{id}")]
         [Authorize(Roles = "Admin")]
         public async Task<ActionResult<MenuItemResponse>> UpdateMenuItem(Guid id, [FromBody] UpdateMenuItemRequest request)
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            //------------------changes for consistent tenant validation from JWT only----------------------
+            var tenantKey = User.FindFirst(JwtClaims.TenantKey)?.Value;
+            if (tenantKey == null) return Unauthorized("Tenant not found in JWT.");
 
             try
             {
-                var menuItem = await _menuService.UpdateMenuItemAsync(id, request, User, _tenantContext.Slug);
+                var menuItem = await _menuService.UpdateMenuItemAsync(id, request, User, tenantKey);
                 return Ok(menuItem);
             }
             catch (ArgumentException ex)
@@ -61,18 +68,20 @@ namespace MesaApi.Controllers
             {
                 return Unauthorized(ex.Message);
             }
+            //------------------end changes----------------------
         }
 
         [HttpDelete("items/{id}")]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteMenuItem(Guid id)
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            //------------------changes for consistent tenant validation from JWT only----------------------
+            var tenantKey = User.FindFirst(JwtClaims.TenantKey)?.Value;
+            if (tenantKey == null) return Unauthorized("Tenant not found in JWT.");
 
             try
             {
-                await _menuService.DeleteMenuItemAsync(id, User, _tenantContext.Slug);
+                await _menuService.DeleteMenuItemAsync(id, User, tenantKey);
                 return NoContent();
             }
             catch (ArgumentException ex)
@@ -83,33 +92,61 @@ namespace MesaApi.Controllers
             {
                 return Unauthorized(ex.Message);
             }
+            //------------------end changes----------------------
         }
 
+        // ---------------- Session APIs ----------------
+
         [HttpGet("items")]
+        [Authorize]
         public async Task<ActionResult<List<MenuItemResponse>>> GetMenuItems()
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            //------------------changes for consistent tenant validation from JWT only----------------------
+            var tenantKey = User.FindFirst(JwtClaims.TenantKey)?.Value;
+            if (tenantKey == null) return Unauthorized("Tenant not found in JWT.");
 
-            var menuItems = await _menuService.GetMenuItemsAsync(_tenantContext.Slug);
+            var menuItems = await _menuService.GetMenuItemsAsync(tenantKey);
             return Ok(menuItems);
+            //------------------end changes----------------------
         }
 
         [HttpGet("items/{id}")]
+        [Authorize]
         public async Task<ActionResult<MenuItemResponse>> GetMenuItem(Guid id)
         {
-            if (string.IsNullOrEmpty(_tenantContext.Slug))
-                return BadRequest("Tenant slug is missing.");
+            //------------------changes for consistent tenant validation from JWT only----------------------
+            var tenantKey = User.FindFirst(JwtClaims.TenantKey)?.Value;
+            if (tenantKey == null) return Unauthorized("Tenant not found in JWT.");
 
             try
             {
-                var menuItem = await _menuService.GetMenuItemAsync(id, _tenantContext.Slug);
+                var menuItem = await _menuService.GetMenuItemAsync(id, tenantKey);
                 return Ok(menuItem);
             }
             catch (ArgumentException ex)
             {
                 return NotFound(ex.Message);
             }
+            //------------------end changes----------------------
         }
+
+        [HttpGet("categories/{categoryId}/items")]
+        [Authorize]
+        public async Task<ActionResult<List<MenuItemResponse>>> GetMenuItemsByCategory(Guid categoryId)
+        {
+            var tenantKey = User.FindFirst(JwtClaims.TenantKey)?.Value;
+            if (tenantKey == null) return Unauthorized("Tenant not found in JWT.");
+
+            try
+            {
+                var menuItems = await _menuService.GetMenuItemsByCategoryAsync(categoryId, tenantKey);
+                return Ok(menuItems);
+            }
+            catch (ArgumentException ex)
+            {
+                return NotFound(ex.Message);
+            }
+        }
+        //------------------end changes----------------------
     }
 }

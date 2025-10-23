@@ -1,39 +1,25 @@
+using MesaApi.Models;
 using MesaApi.Multitenancy;
 using MesaApi.Services;
 using MesaMagica.Api.Catalog;
 using MesaMagica.Api.Extensions;
+using MesaMagica.Api.Middleware;
 using MesaMagica.Api.Multitenancy;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using System.Text;
-
+System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.SetMinimumLevel(LogLevel.Debug);
-
-// Add services to the container.
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "MesaMagica API", Version = "v1" });
-    c.EnableAnnotations();
-    c.AddSecurityDefinition("TenantSlug", new OpenApiSecurityScheme
-    {
-        Name = "X-Tenant-Slug",
-        Type = SecuritySchemeType.ApiKey,
-        In = ParameterLocation.Header,
-        Description = "Tenant slug to identify the tenant (e.g., pizzapalace)"
-    });
-    c.AddSecurityDefinition("TenantKey", new OpenApiSecurityScheme
-    {
-        Name = "X-Tenant-Key",
-        Type = SecuritySchemeType.ApiKey,
-        In = ParameterLocation.Header,
-        Description = "Tenant key for authentication (e.g., key-pizzapalace-1234567890)"
-    });
+
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Name = "Authorization",
@@ -41,62 +27,99 @@ builder.Services.AddSwaggerGen(c =>
         Scheme = "Bearer",
         BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "Enter 'Bearer {token}' obtained from POST /api/sessions/start"
+        Description = "Enter 'Bearer {token}'"
     });
+
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
-            new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "TenantSlug" } },
-            new string[] { }
-        },
-        {
-            new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "TenantKey" } },
-            new string[] { }
-        },
-        {
             new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } },
-            new string[] { }
+            Array.Empty<string>()
         }
     });
 });
-builder.WebHost.UseUrls("http://*:80"); // mandatory inside container
+
+builder.WebHost.UseUrls("http://*:80");
 builder.Services.AddControllers();
+
+//------------------changes for fixing CORS configuration----------------------
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? Array.Empty<string>();
+var allowedDomains = builder.Configuration.GetSection("Cors:AllowedDomains").Get<string[]>() ?? Array.Empty<string>();
+
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowReactApp", policyBuilder =>
+    options.AddPolicy("AllowConfiguredOrigins", policy =>
     {
-        policyBuilder.WithOrigins("http://*:80")
-                     .AllowAnyHeader()
-                     .AllowAnyMethod();
+        policy.SetIsOriginAllowed(origin =>
+        {
+            try
+            {
+                var uri = new Uri(origin);
+
+                // Allow exact matches from config
+                if (allowedOrigins.Contains(origin))
+                    return true;
+
+                // Allow subdomains of configured domains
+                foreach (var domain in allowedDomains)
+                {
+                    if (uri.Host.EndsWith(domain, StringComparison.OrdinalIgnoreCase) ||
+                        uri.Host.Equals(domain, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+
+                // Allow localhost in development
+                if (builder.Environment.IsDevelopment() && uri.Host == "localhost")
+                    return true;
+
+                return false;
+            }
+            catch
+            {
+                return false;
+            }
+        })
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials();
     });
 });
+//------------------end changes----------------------
 
-// Configure JWT settings
-builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("Jwt"));
+//------------------changes for reduced JWT expiry time----------------------
+builder.Services.Configure<JwtSettings>(options =>
+{
+    var jwtSection = builder.Configuration.GetSection("Jwt");
+    options.Key = jwtSection["Key"]!;
+    options.Issuer = jwtSection["Issuer"]!;
+    options.Audience = jwtSection["Audience"]!;
+    options.ExpiryMinutes = 60; // Reduced from 240 to 60 minutes for sessions
+});
+//------------------end changes----------------------
 
-// Register IHttpContextAccessor
+//------------------changes for session timeout configuration----------------------
+builder.Services.Configure<SessionTimeoutSettings>(
+    builder.Configuration.GetSection("SessionTimeout"));
+//------------------end changes----------------------
+
 builder.Services.AddHttpContextAccessor();
 
-// Register CatalogDbContext (global catalog)
 builder.Services.AddDbContext<CatalogDbContext>(opt =>
     opt.UseNpgsql(builder.Configuration.GetConnectionString("CatalogConnection"))
-       .EnableSensitiveDataLogging()
-       .EnableDetailedErrors());
+       .EnableSensitiveDataLogging(builder.Environment.IsDevelopment())
+       .EnableDetailedErrors(builder.Environment.IsDevelopment()));
 
-// Register ITenantContext with factory
 builder.Services.AddScoped<ITenantContext>(sp =>
 {
     var httpContextAccessor = sp.GetRequiredService<IHttpContextAccessor>();
     var httpContext = httpContextAccessor.HttpContext;
 
-    // If middleware has resolved tenant
     if (httpContext?.Items["TenantContext"] is TenantContext tenantContext && tenantContext.HasTenant)
     {
         return tenantContext;
     }
 
-    // Fallback tenant for non-HTTP contexts (e.g., migrations)
-    var fallbackConnectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+    var fallbackConnectionString = builder.Configuration.GetConnectionString("TenantConnection");
     if (string.IsNullOrWhiteSpace(fallbackConnectionString))
     {
         throw new InvalidOperationException("Fallback tenant connection string is not configured.");
@@ -111,16 +134,25 @@ builder.Services.AddScoped<ITenantContext>(sp =>
         licenseExpiration: DateTime.UtcNow.AddYears(2)
     );
 });
-// Add Redis
-builder.Services.AddStackExchangeRedisCache(options =>
-{
-    options.Configuration = "localhost:6379"; // Your Redis connection string
-    options.InstanceName = "MesaMagica:";
-});
-// Register application services
+
 builder.Services.AddMesaMagicaServices(builder.Configuration);
 
-// Configure JWT authentication
+//------------------changes for session timeout background service----------------------
+// Register session timeout background service
+builder.Services.AddHostedService<SessionTimeoutService>();
+
+//------------------FUTURE SIGNALR MIGRATION----------------------
+// TODO: Add SignalR with Redis backplane
+// builder.Services.AddSignalR()
+//     .AddStackExchangeRedis(builder.Configuration.GetConnectionString("Redis"), options =>
+//     {
+//         options.Configuration.ChannelPrefix = "mesamagica";
+//     });
+// 
+// builder.Services.AddScoped<INotificationHub, NotificationHub>();
+//------------------END FUTURE SIGNALR----------------------
+//------------------end changes----------------------
+
 var jwt = builder.Configuration.GetSection("Jwt");
 var key = Encoding.UTF8.GetBytes(jwt["Key"]!);
 
@@ -140,26 +172,53 @@ builder.Services.AddAuthentication(o =>
         ValidateIssuerSigningKey = true,
         ValidIssuer = jwt["Issuer"],
         ValidAudience = jwt["Audience"],
-        IssuerSigningKey = new SymmetricSecurityKey(key)
-
+        IssuerSigningKey = new SymmetricSecurityKey(key),
+        //------------------changes for clock skew----------------------
+        ClockSkew = TimeSpan.Zero // Remove default 5 minute grace period
+        //------------------end changes----------------------
     };
+
+    //------------------FUTURE SIGNALR AUTHENTICATION----------------------
+    // Enable JWT authentication for SignalR WebSocket connections
+    // o.Events = new JwtBearerEvents
+    // {
+    //     OnMessageReceived = context =>
+    //     {
+    //         var accessToken = context.Request.Query["access_token"];
+    //         var path = context.HttpContext.Request.Path;
+    //         if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+    //         {
+    //             context.Token = accessToken;
+    //         }
+    //         return Task.CompletedTask;
+    //     }
+    // };
+    //------------------END FUTURE SIGNALR----------------------
 });
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
+app.UseCors("AllowConfiguredOrigins");
 app.UseHttpsRedirection();
 app.UseRouting();
-app.UseCors("AllowReactApp");
+
+app.UseGlobalExceptionHandler();
+
 app.UseTenantResolution();
 app.UseAuthentication();
 app.UseAuthorization();
+
+//------------------FUTURE SIGNALR HUB MAPPING----------------------
+// Map SignalR hubs
+// app.MapHub<NotificationHub>("/hubs/notifications");
+//------------------END FUTURE SIGNALR----------------------
+
 app.MapControllers();
 
 app.Run();

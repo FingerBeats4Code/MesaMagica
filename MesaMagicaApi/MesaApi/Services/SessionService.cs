@@ -1,4 +1,4 @@
-﻿// Services/SessionService.cs
+﻿using MesaApi.Common;
 using MesaApi.Models;
 using MesaApi.Multitenancy;
 using MesaApi.Services;
@@ -17,15 +17,21 @@ public class SessionService : ISessionService
     private readonly ApplicationDbContext _db;
     private readonly JwtSettings _jwt;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly ILogger<SessionService> _logger;
 
-    public SessionService(ApplicationDbContext db, IOptions<JwtSettings> jwt, IHttpContextAccessor httpContextAccessor)
+    public SessionService(
+        ApplicationDbContext db,
+        IOptions<JwtSettings> jwt,
+        IHttpContextAccessor httpContextAccessor,
+        ILogger<SessionService> logger)
     {
         _db = db;
         _jwt = jwt.Value;
         _httpContextAccessor = httpContextAccessor;
+        _logger = logger;
     }
 
-    public async Task<(TableSession session, string jwt)> StartSessionAsync(int tableId, CancellationToken ct = default)
+    public async Task<(TableSession session, string jwt)> StartSessionAsync(Guid tableId, CancellationToken ct = default)
     {
         var tenantContext = _httpContextAccessor.HttpContext?.Items["TenantContext"] as ITenantContext
             ?? throw new InvalidOperationException("Tenant context not resolved.");
@@ -36,42 +42,119 @@ public class SessionService : ISessionService
         var table = await _db.RestaurantTables.FirstOrDefaultAsync(t => t.TableId == tableId, ct)
                     ?? throw new InvalidOperationException("Table not found");
 
-        if (table.IsOccupied)
-            throw new InvalidOperationException("Table is currently occupied");
+        var seatSize = table.TableSeatSize > 0 ? table.TableSeatSize : 1;
 
-        var session = new TableSession
+        // Try to find and increment existing active session with concurrency control
+        var activeSession = await _db.TableSessions
+            .FirstOrDefaultAsync(s => s.TableId == tableId && s.IsActive, ct);
+
+        if (activeSession != null)
+        {
+            // Use raw SQL to atomically increment with row-level locking
+            var rowsAffected = await _db.Database.ExecuteSqlRawAsync(
+                @"UPDATE ""TableSessions"" 
+                  SET ""SessionCount"" = ""SessionCount"" + 1 
+                  WHERE ""SessionId"" = {0} 
+                    AND ""SessionCount"" < {1} 
+                    AND ""IsActive"" = true",
+                new object[] { activeSession.SessionId, seatSize },
+                ct);
+
+            if (rowsAffected == 0)
+            {
+                _logger.LogWarning("Table {TableId} is fully occupied. Current count: {Count}, Max: {Max}",
+                    tableId, activeSession.SessionCount, seatSize);
+                throw new InvalidOperationException("Table is fully occupied.");
+            }
+
+            // Refresh the entity to get updated SessionCount
+            await _db.Entry(activeSession).ReloadAsync(ct);
+
+            _logger.LogInformation("Incremented session count for table {TableId}. New count: {Count}",
+                tableId, activeSession.SessionCount);
+
+            var existingJwt = GenerateJwt(activeSession.SessionId, table.TableId, tenantContext.TenantKey);
+            return (activeSession, existingJwt);
+        }
+
+        // Create new session if none active
+        var newSession = new TableSession
         {
             TableId = tableId,
             SessionToken = Guid.NewGuid(),
             IsActive = true,
-            StartedAt = DateTime.UtcNow
+            StartedAt = DateTime.UtcNow,
+            SessionCount = 1
         };
 
         table.IsOccupied = true;
-
-        _db.TableSessions.Add(session);
+        _db.TableSessions.Add(newSession);
         _db.RestaurantTables.Update(table);
         await _db.SaveChangesAsync(ct);
 
-        var jwt = GenerateJwt(session.SessionId, table.TableId, tenantContext.TenantId);
-        return (session, jwt);
+        _logger.LogInformation("Created new session for table {TableId}", tableId);
+
+        var jwt = GenerateJwt(newSession.SessionId, table.TableId, tenantContext.TenantKey);
+        return (newSession, jwt);
     }
 
     public Task<TableSession?> GetActiveAsync(Guid sessionId, CancellationToken ct = default)
         => _db.TableSessions.Include(s => s.Table)
             .FirstOrDefaultAsync(s => s.SessionId == sessionId && s.IsActive, ct);
 
-    // Change the parameter type of sessionId in GenerateJwt from int to Guid
-    private string GenerateJwt(Guid sessionId, int tableId, Guid tenantId)
+    // MesaMagicaApi/MesaApi/Services/SessionService.cs
+    // Add this method to the SessionService class
+
+    public async Task CloseSessionAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        var session = await _db.TableSessions
+            .Include(s => s.Table)
+            .FirstOrDefaultAsync(s => s.SessionId == sessionId, ct);
+
+        if (session == null)
+        {
+            _logger.LogWarning("Attempted to close non-existent session: {SessionId}", sessionId);
+            throw new InvalidOperationException($"Session {sessionId} not found");
+        }
+
+        if (!session.IsActive)
+        {
+            _logger.LogInformation("Session {SessionId} is already closed", sessionId);
+            return;
+        }
+
+        // Close the session
+        session.IsActive = false;
+        session.EndedAt = DateTime.UtcNow;
+        session.SessionCount = 0; // Reset session count
+
+        // Free the table
+        if (session.Table != null)
+        {
+            session.Table.IsOccupied = false;
+            _db.RestaurantTables.Update(session.Table);
+        }
+
+        _db.TableSessions.Update(session);
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "Session {SessionId} closed successfully. Table {TableId} is now free.",
+            sessionId,
+            session.TableId
+        );
+    }
+
+    private string GenerateJwt(Guid sessionId, Guid tableId, string tenantKey)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.Key));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
         var claims = new[]
         {
-            new Claim("tenantId", tenantId.ToString()),
-            new Claim("sessionId", sessionId.ToString()),
-            new Claim("tableId", tableId.ToString()),
+            new Claim(JwtClaims.TenantKey, tenantKey),
+            new Claim(JwtClaims.SessionId, sessionId.ToString()),
+            new Claim(JwtClaims.TableId, tableId.ToString()), // Now Guid
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 
@@ -85,9 +168,4 @@ public class SessionService : ISessionService
 
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
-
-    //public Task UpdateSessionStatusAsync(Guid sessionId, UpdateSessionStatusRequest request, ClaimsPrincipal user, string tenantSlug, string tenantKey, CancellationToken ct = default)
-    //{
-    //    throw new NotImplementedException();
-    //}
 }

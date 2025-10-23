@@ -1,17 +1,12 @@
 ﻿using MesaApi.Models;
 using MesaApi.Multitenancy;
+using MesaApi.Services; //----------------------------- changes: use SessionService -----------------------------
 using MesaMagica.Api.Catalog;
 using MesaMagica.Api.Data;
-using MesaMagica.Api.Multitenancy;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.IdentityModel.Tokens;
 using Swashbuckle.AspNetCore.Annotations;
-using System;
-using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
-using System.Text;
 
 namespace MesaMagica.Api.Controllers;
 
@@ -23,7 +18,7 @@ public class SessionResponse
 
 public class StartSessionRequest
 {
-    public string TableId { get; set; } = string.Empty; 
+    public string TableId { get; set; } = string.Empty; // Now accepts Guid as string
     public string QRCodeUrl { get; set; } = string.Empty;
 }
 
@@ -34,12 +29,18 @@ public class SessionsController : ControllerBase
     private readonly CatalogDbContext _catalogDbContext;
     private readonly ApplicationDbContext _applicationDbContext;
     private readonly ILogger<SessionsController> _logger;
+    private readonly ISessionService _sessionService;
 
-    public SessionsController(CatalogDbContext catalogDbContext, ApplicationDbContext applicationDbContext, ILogger<SessionsController> logger)
+    public SessionsController(
+        CatalogDbContext catalogDbContext,
+        ApplicationDbContext applicationDbContext,
+        ILogger<SessionsController> logger,
+        ISessionService sessionService)
     {
         _catalogDbContext = catalogDbContext;
         _applicationDbContext = applicationDbContext;
         _logger = logger;
+        _sessionService = sessionService;
     }
 
     [HttpPost("start")]
@@ -49,7 +50,7 @@ public class SessionsController : ControllerBase
     [SwaggerResponse(401, "Tenant not found, inactive, or invalid key")]
     [SwaggerResponse(403, "License is invalid or expired")]
     [SwaggerResponse(404, "Table not found or inactive")]
-    public async Task<IActionResult> StartSession([FromBody] StartSessionRequest request)
+    public async Task<IActionResult> StartSession([FromBody] StartSessionRequest request, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(request.QRCodeUrl))
         {
@@ -61,93 +62,27 @@ public class SessionsController : ControllerBase
         {
             var uri = new Uri(request.QRCodeUrl);
             var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
-            //var tableIdStr = query["tableId"];
 
-            if (string.IsNullOrEmpty(request.TableId))
+            var tableIdStr = query["tableId"] ?? request.TableId;
+
+            if (string.IsNullOrEmpty(tableIdStr))
             {
                 _logger.LogWarning("Invalid QR code format. URL: {QRCodeUrl}", request.QRCodeUrl);
                 return BadRequest("Invalid QR code format. Must contain tableId.");
             }
 
-            if (!int.TryParse(request.TableId, out var tableId))
+            if (!Guid.TryParse(tableIdStr, out var tableId)) // CHANGED: Parse as Guid
             {
                 _logger.LogWarning("Invalid tableId in QR code. URL: {QRCodeUrl}", request.QRCodeUrl);
                 return BadRequest("Invalid tableId in QR code.");
             }
 
-            // 🔹 Get tenantSlug and apiKey from headers
-            var tenantSlug = HttpContext.Request.Headers["X-Tenant-Slug"].FirstOrDefault();
-            var tenantKey = HttpContext.Request.Headers["X-Tenant-Key"].FirstOrDefault();
+            var (session, jwt) = await _sessionService.StartSessionAsync(tableId, ct);
 
-            if (string.IsNullOrEmpty(tenantSlug) || string.IsNullOrEmpty(tenantKey))
-            {
-                _logger.LogWarning("Tenant slug or key not provided in headers.");
-                return Unauthorized("Tenant slug and key are required in headers.");
-            }
-
-            // 🔹 Validate tenant
-            var tenant = await _catalogDbContext.Tenants
-                .FirstOrDefaultAsync(t =>
-                    t.Slug.ToLower() == tenantSlug.ToLower() &&
-                    t.TenantKey == tenantKey &&
-                    t.IsActive);
-
-            if (tenant == null)
-            {
-                _logger.LogWarning("Tenant not found or invalid key. Slug: {TenantSlug}, Key: {TenantKey}", tenantSlug, tenantKey);
-                return Unauthorized($"Tenant with slug '{tenantSlug}' not found, inactive, or invalid key.");
-            }
-
-            if (tenant.LicenseExpiration == null || tenant.LicenseExpiration < DateTime.UtcNow)
-            {
-                _logger.LogWarning("Tenant license is invalid or expired. Slug: {TenantSlug}", tenant.Slug);
-                return StatusCode(StatusCodes.Status403Forbidden, $"Tenant '{tenantSlug}' has an invalid or expired license.");
-            }
-
-            // 🔹 Validate table
-            var table = await _applicationDbContext.RestaurantTables.FirstOrDefaultAsync(t => t.TableId == tableId);
-            if (table == null)
-            {
-                _logger.LogWarning("Table not found. TableId: {TableId}", tableId);
-                return NotFound($"Table with ID {tableId} not found.");
-            }
-
-            // 🔹 Check for existing session
-            var existingSession = await _applicationDbContext.TableSessions.FirstOrDefaultAsync(s => s.TableId == tableId && s.IsActive);
-            var sessionId = existingSession?.SessionId ?? Guid.NewGuid();
-
-            if (existingSession == null)
-            {
-                var session = new TableSession
-                {
-                    SessionId = sessionId,
-                    TableId = tableId,
-                    IsActive = true,
-                    StartedAt = DateTime.UtcNow,
-                };
-                _applicationDbContext.TableSessions.Add(session);
-                await _applicationDbContext.SaveChangesAsync();
-            }
-
-        
-            var claims = new[]
-            {
-                new Claim("sessionId", sessionId.ToString()),
-                new Claim("tenantSlug", tenant.Slug),
-                new Claim("tableId", tableId.ToString())
-            };
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes("+XZSsmqXdhRcDHumiZvggGVSSb6SkrMWlYN7ASk+jzDcY2lYkz2eqHuH7ANvJPLsrzDiWZNga1TZu6MMSmbL2w=="));
-            var token = new JwtSecurityToken(
-                issuer: "MesaMagicaApi",
-                audience: "MesaMagicaClient",
-                claims: claims,
-                expires: DateTime.UtcNow.AddMinutes(240),
-                signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256)
-            );
             return Ok(new SessionResponse
             {
-                SessionId = sessionId.ToString(),
-                Jwt = new JwtSecurityTokenHandler().WriteToken(token)
+                SessionId = session.SessionId.ToString(),
+                Jwt = jwt
             });
         }
         catch (UriFormatException)
@@ -157,4 +92,43 @@ public class SessionsController : ControllerBase
         }
     }
 
+    // MesaMagicaApi/MesaApi/Controllers/SessionsController.cs
+    // Add this method to the SessionsController class
+
+    [HttpPost("close")]
+    [SwaggerOperation(Summary = "Closes a session and frees the table")]
+    [SwaggerResponse(200, "Session closed successfully")]
+    [SwaggerResponse(400, "Invalid request")]
+    [SwaggerResponse(404, "Session not found")]
+    public async Task<IActionResult> CloseSession([FromBody] CloseSessionRequest request, CancellationToken ct)
+    {
+        if (request.SessionId == Guid.Empty)
+        {
+            _logger.LogWarning("Invalid session ID in close request");
+            return BadRequest("Invalid session ID");
+        }
+
+        try
+        {
+            await _sessionService.CloseSessionAsync(request.SessionId, ct);
+            return Ok(new { message = "Session closed successfully" });
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Session not found: {SessionId}", request.SessionId);
+            return NotFound(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error closing session: {SessionId}", request.SessionId);
+            return StatusCode(500, "Error closing session");
+        }
+    }
+
+    // Add this class at the bottom of the file
+    public class CloseSessionRequest
+    {
+        public Guid SessionId { get; set; }
+    }
 }
+

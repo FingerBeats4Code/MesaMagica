@@ -16,6 +16,7 @@ namespace MesaApi.Services
             _tenantContext = tenantContext;
         }
 
+        // Change: Parse tableIdStr as Guid instead of int, and use Guid in all comparisons
         public async Task<string> StartSessionAsync(string qrCodeUrl)
         {
             if (string.IsNullOrEmpty(qrCodeUrl))
@@ -33,7 +34,7 @@ namespace MesaApi.Services
             if (tenantSlug != _tenantContext.Slug)
                 throw new UnauthorizedAccessException("QR code tenant does not match current tenant.");
 
-            if (!int.TryParse(tableIdStr, out var tableId))
+            if (!Guid.TryParse(tableIdStr, out var tableId))
                 throw new InvalidOperationException("Invalid tableId in QR code.");
 
             // Validate table exists and is active

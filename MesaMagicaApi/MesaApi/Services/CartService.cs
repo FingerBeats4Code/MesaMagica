@@ -1,176 +1,297 @@
-﻿using MesaApi.Models;
+﻿using MesaApi.Common;
+using MesaApi.Models;
 using MesaApi.Services;
 using MesaMagica.Api.Data;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Caching.Distributed;
-using System.Collections.Generic;
 using System.Security.Claims;
 using System.Text.Json;
-using System.Threading.Tasks;
 
 namespace MesaMagicaApi.Services
 {
     public class CartService : ICartService
     {
         private readonly ApplicationDbContext _context;
-        private readonly IDistributedCache _redisCache;
+        private readonly IRedisService _redisService;
         private readonly IOrderService _orderService;
+        private readonly ILogger<CartService> _logger;
 
-        public CartService(ApplicationDbContext context, IDistributedCache redisCache, IOrderService orderService)
+        public CartService(
+            ApplicationDbContext context,
+            IRedisService redisService,
+            IOrderService orderService,
+            ILogger<CartService> logger)
         {
-            _context = context;
-            _redisCache = redisCache;
-            _orderService = orderService;
+            _context = context ?? throw new ArgumentNullException(nameof(context));
+            _redisService = redisService ?? throw new ArgumentNullException(nameof(redisService));
+            _orderService = orderService ?? throw new ArgumentNullException(nameof(orderService));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
         public async Task<List<CartItem>> GetCartAsync(Guid sessionId)
         {
             var cacheKey = $"cart_{sessionId}";
 
-            // Try Redis cache first
-            var cachedCart = await _redisCache.GetStringAsync(cacheKey);
-            if (!string.IsNullOrEmpty(cachedCart))
+            try
             {
-                return JsonSerializer.Deserialize<List<CartItem>>(cachedCart);
+                var cachedCart = await _redisService.GetAsync(cacheKey);
+                if (!string.IsNullOrEmpty(cachedCart))
+                {
+                    var cartDtos = JsonSerializer.Deserialize<List<CartItemDto>>(cachedCart);
+                    if (cartDtos != null && cartDtos.Any())
+                    {
+                        _logger.LogDebug("Cart retrieved from cache for SessionId: {SessionId}", sessionId);
+                        return await ConvertDtosToEntities(cartDtos);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to retrieve cart from cache for SessionId: {SessionId}", sessionId);
             }
 
-            // Fetch from Postgres with related MenuItem data
             var cart = await _context.CartItems
-                .Where(c => c.SessionId == sessionId)
-                .Include(c => c.MenuItem) // Include MenuItem details
+                .Where(c => c.SessionId == sessionId && c.Quantity > 0)
+                .Include(c => c.MenuItem)
+                    .ThenInclude(m => m.Category)
                 .ToListAsync();
 
-            // Cache in Redis (expire after 30 min)
-            var serializedCart = JsonSerializer.Serialize(cart);
-            await _redisCache.SetStringAsync(cacheKey, serializedCart, new DistributedCacheEntryOptions
+            if (cart.Any())
             {
-                AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30)
-            });
+                var cartDtos = cart.Select(c => new CartItemDto
+                {
+                    Id = c.Id,
+                    SessionId = c.SessionId,
+                    ItemId = c.ItemId,
+                    Quantity = c.Quantity,
+                    AddedAt = c.AddedAt,
+                    ItemName = c.MenuItem?.Name ?? "",
+                    ItemPrice = c.MenuItem?.Price ?? 0,
+                    ItemImageUrl = c.MenuItem?.ImageUrl ?? "",
+                    CategoryName = c.MenuItem?.Category?.Name ?? "",
+                    IsAvailable = c.MenuItem?.IsAvailable ?? false
+                }).ToList();
+
+                try
+                {
+                    await _redisService.SetAsync(cacheKey, JsonSerializer.Serialize(cartDtos), TimeSpan.FromMinutes(30));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to cache cart for SessionId: {SessionId}", sessionId);
+                }
+            }
 
             return cart;
         }
 
+        //------------------changes for supporting increment and decrement via quantity parameter----------------------
         public async Task AddToCartAsync(Guid sessionId, Guid itemId, int quantity)
         {
+            if (quantity == 0)
+                throw new ArgumentException("Quantity cannot be zero.");
+
             var cacheKey = $"cart_{sessionId}";
 
-            // Validate MenuItem exists
-            var menuItem = await _context.MenuItems.FindAsync(itemId);
-            if (menuItem == null)
-            {
-                throw new ArgumentException($"MenuItem with ID {itemId} not found.");
-            }
+            var menuItem = await _context.MenuItems
+                .Include(m => m.Category)
+                .FirstOrDefaultAsync(m => m.ItemId == itemId);
 
-            // Validate TableSession exists
+            if (menuItem == null)
+                throw new ArgumentException($"MenuItem with ID {itemId} not found.");
+
+            if (!menuItem.IsAvailable || !menuItem.Category.IsActive)
+                throw new InvalidOperationException($"MenuItem '{menuItem.Name}' is not available.");
+
             var session = await _context.TableSessions.FindAsync(sessionId);
             if (session == null || !session.IsActive)
-            {
-                throw new ArgumentException($"Session with ID {sessionId} not found or inactive.");
-            }
+                throw new InvalidOperationException($"Session with ID {sessionId} not found or inactive.");
 
-            // Update Postgres
             var existingItem = await _context.CartItems
                 .FirstOrDefaultAsync(c => c.SessionId == sessionId && c.ItemId == itemId);
+
             if (existingItem != null)
             {
+                // Update existing item quantity
                 existingItem.Quantity += quantity;
+                existingItem.AddedAt = DateTime.UtcNow;
+
+                if (existingItem.Quantity <= 0)
+                {
+                    // Remove item if quantity becomes zero or negative
+                    _context.CartItems.Remove(existingItem);
+                    _logger.LogDebug("Removed cart item due to zero/negative quantity. SessionId: {SessionId}, ItemId: {ItemId}",
+                        sessionId, itemId);
+                }
+                else
+                {
+                    _logger.LogDebug("Updated cart item quantity. SessionId: {SessionId}, ItemId: {ItemId}, NewQuantity: {Quantity}",
+                        sessionId, itemId, existingItem.Quantity);
+                }
             }
             else
             {
-                _context.CartItems.Add(new CartItem
+                // Add new item only if quantity is positive
+                if (quantity > 0)
                 {
-                    SessionId = sessionId,
-                    ItemId = itemId,
-                    Quantity = quantity,
-                    Session = session, // Set navigation property
-                    MenuItem = menuItem // Set navigation property
-                });
+                    _context.CartItems.Add(new CartItem
+                    {
+                        Id = Guid.NewGuid(),
+                        SessionId = sessionId,
+                        ItemId = itemId,
+                        Quantity = quantity,
+                        AddedAt = DateTime.UtcNow,
+                        Session = session,
+                        MenuItem = menuItem
+                    });
+                    _logger.LogDebug("Added new cart item. SessionId: {SessionId}, ItemId: {ItemId}, Quantity: {Quantity}",
+                        sessionId, itemId, quantity);
+                }
+                else
+                {
+                    _logger.LogWarning("Attempted to add new item with negative quantity. SessionId: {SessionId}, ItemId: {ItemId}",
+                        sessionId, itemId);
+                    throw new InvalidOperationException("Cannot add a new item with negative quantity.");
+                }
             }
-            await _context.SaveChangesAsync();
 
-            // Invalidate Redis cache
-            await _redisCache.RemoveAsync(cacheKey);
+            await _context.SaveChangesAsync();
+            await InvalidateCacheAsync(sessionId);
         }
+        //------------------end changes----------------------
 
         public async Task RemoveFromCartAsync(Guid sessionId, Guid itemId)
         {
-            var cacheKey = $"cart_{sessionId}";
-
-            // Remove from Postgres
             var item = await _context.CartItems
                 .FirstOrDefaultAsync(c => c.SessionId == sessionId && c.ItemId == itemId);
+
             if (item != null)
             {
                 _context.CartItems.Remove(item);
                 await _context.SaveChangesAsync();
+                _logger.LogDebug("Removed cart item. SessionId: {SessionId}, ItemId: {ItemId}", sessionId, itemId);
+            }
+            else
+            {
+                _logger.LogWarning("Attempted to remove non-existent cart item. SessionId: {SessionId}, ItemId: {ItemId}",
+                    sessionId, itemId);
             }
 
-            // Invalidate Redis cache
-            await _redisCache.RemoveAsync(cacheKey);
+            await InvalidateCacheAsync(sessionId);
         }
 
-        public async Task<OrderResponse> SubmitOrderAsync(Guid sessionId, string tableId, string tenantSlug, ClaimsPrincipal user)
+        public async Task<OrderResponse> SubmitOrderAsync(Guid sessionId, string tableId, string tenantKey, ClaimsPrincipal user)
         {
-            var cacheKey = $"cart_{sessionId}";
-
-            var cartItems = await _context.CartItems
-                .Where(c => c.SessionId == sessionId)
-                .Include(c => c.MenuItem)
-                .ThenInclude(m => m.Category)
-                .ToListAsync();
-
-            if (!cartItems.Any())
+            using var transaction = await _context.Database.BeginTransactionAsync();
+            try
             {
-                throw new InvalidOperationException("Cannot submit an empty cart.");
-            }
+                var userTenantKey = user.FindFirst(JwtClaims.TenantKey)?.Value;
+                if (string.IsNullOrEmpty(userTenantKey) || userTenantKey != tenantKey)
+                    throw new UnauthorizedAccessException("Tenant mismatch in JWT token.");
 
-            // Validate items
-            foreach (var item in cartItems)
-            {
-                if (item.MenuItem == null || !item.MenuItem.IsAvailable || !item.MenuItem.Category.IsActive)
+                var cartItems = await _context.CartItems
+                    .Where(c => c.SessionId == sessionId)
+                    .Include(c => c.MenuItem)
+                        .ThenInclude(m => m.Category)
+                    .ToListAsync();
+
+                if (!cartItems.Any())
+                    throw new InvalidOperationException("Cannot submit an empty cart.");
+
+                var unavailableItems = cartItems
+                    .Where(c => c.MenuItem == null || !c.MenuItem.IsAvailable || !c.MenuItem.Category.IsActive)
+                    .ToList();
+
+                if (unavailableItems.Any())
                 {
-                    throw new InvalidOperationException($"MenuItem {item.ItemId} is not available or its category is inactive.");
+                    var itemNames = string.Join(", ", unavailableItems.Select(i => i.MenuItem?.Name ?? "Unknown"));
+                    throw new InvalidOperationException(
+                        $"The following items are no longer available: {itemNames}. Please remove them from your cart.");
                 }
-            }
 
-            // Create order request with item details
-            var orderRequest = new CreateOrderRequest
-            {
-                Items = cartItems.Select(c => new CreateOrderItemRequest
+                var orderRequest = new CreateOrderRequest
                 {
-                    ItemId = c.ItemId, // Convert string to Guid
-                    ItemName = c.MenuItem.Name,
-                    Price = c.MenuItem.Price,
-                    Quantity = c.Quantity
-                }).ToList()
-            };
+                    Items = cartItems.Select(c => new CreateOrderItemRequest
+                    {
+                        ItemId = c.ItemId,
+                        ItemName = c.MenuItem!.Name,
+                        Price = c.MenuItem.Price,
+                        Quantity = c.Quantity
+                    }).ToList()
+                };
 
-            // Call OrderService to create order
-            var orderResponse = await _orderService.CreateOrderAsync(orderRequest, user, tenantSlug);
+                var orderResponse = await _orderService.CreateOrderAsync(orderRequest, user, tenantKey);
 
-            // Clear cart
-            _context.CartItems.RemoveRange(cartItems);
-            await _context.SaveChangesAsync();
+                _context.CartItems.RemoveRange(cartItems);
+                await _context.SaveChangesAsync();
 
-            await _redisCache.RemoveAsync(cacheKey);
+                await transaction.CommitAsync();
+                await InvalidateCacheAsync(sessionId);
 
-            return orderResponse;
+                _logger.LogInformation("Order submitted successfully. SessionId: {SessionId}, OrderId: {OrderId}, Items: {ItemCount}",
+                    sessionId, orderResponse.OrderId, cartItems.Count);
+
+                return orderResponse;
+            }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync();
+                _logger.LogError(ex, "Failed to submit order for SessionId: {SessionId}", sessionId);
+                throw;
+            }
         }
 
         public async Task ClearCartAsync(Guid sessionId)
         {
-            var cacheKey = $"cart_{sessionId}";
-
-            // Clear cart in Postgres
             var cartItems = await _context.CartItems
                 .Where(c => c.SessionId == sessionId)
                 .ToListAsync();
-            _context.CartItems.RemoveRange(cartItems);
-            await _context.SaveChangesAsync();
 
-            // Invalidate Redis cache
-            await _redisCache.RemoveAsync(cacheKey);
+            if (cartItems.Any())
+            {
+                _context.CartItems.RemoveRange(cartItems);
+                await _context.SaveChangesAsync();
+                _logger.LogDebug("Cleared cart. SessionId: {SessionId}, Items removed: {Count}",
+                    sessionId, cartItems.Count);
+            }
+
+            await InvalidateCacheAsync(sessionId);
         }
 
+        private async Task<List<CartItem>> ConvertDtosToEntities(List<CartItemDto> dtos)
+        {
+            var itemIds = dtos.Select(d => d.ItemId).ToList();
+            var menuItems = await _context.MenuItems
+                .Include(m => m.Category)
+                .Where(m => itemIds.Contains(m.ItemId))
+                .ToDictionaryAsync(m => m.ItemId);
+
+            var sessionIds = dtos.Select(d => d.SessionId).Distinct().ToList();
+            var sessions = await _context.TableSessions
+                .Where(s => sessionIds.Contains(s.SessionId))
+                .ToDictionaryAsync(s => s.SessionId);
+
+            return dtos.Select(dto => new CartItem
+            {
+                Id = dto.Id,
+                SessionId = dto.SessionId,
+                ItemId = dto.ItemId,
+                Quantity = dto.Quantity,
+                AddedAt = dto.AddedAt,
+                MenuItem = menuItems.GetValueOrDefault(dto.ItemId)!,
+                Session = sessions.GetValueOrDefault(dto.SessionId)!
+            }).ToList();
+        }
+
+        private async Task InvalidateCacheAsync(Guid sessionId)
+        {
+            try
+            {
+                await _redisService.RemoveAsync($"cart_{sessionId}");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to invalidate cache for SessionId: {SessionId}", sessionId);
+            }
+        }
     }
 }

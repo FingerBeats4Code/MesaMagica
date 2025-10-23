@@ -9,11 +9,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
 #nullable disable
 
-namespace MesaApi.Migrations.Tenant
+namespace MesaApi.Migrations.ApplicationDb
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20250906191847_AddUserColumns")]
-    partial class AddUserColumns
+    [Migration("20251020182629_ChangeTableIdToGuid")]
+    partial class ChangeTableIdToGuid
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -24,6 +24,33 @@ namespace MesaApi.Migrations.Tenant
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+
+            modelBuilder.Entity("MesaApi.Models.CartItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("AddedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ItemId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Quantity")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("SessionId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ItemId");
+
+                    b.HasIndex("SessionId");
+
+                    b.ToTable("CartItems", (string)null);
+                });
 
             modelBuilder.Entity("MesaApi.Models.Category", b =>
                 {
@@ -142,11 +169,9 @@ namespace MesaApi.Migrations.Tenant
 
             modelBuilder.Entity("MesaApi.Models.RestaurantTable", b =>
                 {
-                    b.Property<int>("TableId")
+                    b.Property<Guid>("TableId")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("integer");
-
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("TableId"));
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -161,6 +186,9 @@ namespace MesaApi.Migrations.Tenant
                     b.Property<string>("TableNumber")
                         .IsRequired()
                         .HasColumnType("text");
+
+                    b.Property<int>("TableSeatSize")
+                        .HasColumnType("integer");
 
                     b.HasKey("TableId");
 
@@ -182,14 +210,17 @@ namespace MesaApi.Migrations.Tenant
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
 
+                    b.Property<int>("SessionCount")
+                        .HasColumnType("integer");
+
                     b.Property<Guid>("SessionToken")
                         .HasColumnType("uuid");
 
                     b.Property<DateTime>("StartedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int>("TableId")
-                        .HasColumnType("integer");
+                    b.Property<Guid>("TableId")
+                        .HasColumnType("uuid");
 
                     b.HasKey("SessionId");
 
@@ -253,6 +284,25 @@ namespace MesaApi.Migrations.Tenant
                         .IsUnique();
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("MesaApi.Models.CartItem", b =>
+                {
+                    b.HasOne("MesaApi.Models.MenuItem", "MenuItem")
+                        .WithMany()
+                        .HasForeignKey("ItemId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("MesaApi.Models.TableSession", "Session")
+                        .WithMany("CartItems")
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MenuItem");
+
+                    b.Navigation("Session");
                 });
 
             modelBuilder.Entity("MesaApi.Models.MenuItem", b =>
@@ -320,6 +370,11 @@ namespace MesaApi.Migrations.Tenant
             modelBuilder.Entity("MesaApi.Models.Order", b =>
                 {
                     b.Navigation("OrderItems");
+                });
+
+            modelBuilder.Entity("MesaApi.Models.TableSession", b =>
+                {
+                    b.Navigation("CartItems");
                 });
 #pragma warning restore 612, 618
         }

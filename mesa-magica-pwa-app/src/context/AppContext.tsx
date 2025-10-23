@@ -1,33 +1,47 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 
 interface AppContextType {
-  jwt: string;
-  sessionId: string;
+  jwt: string | null;
+  sessionId: string | null;
   tenantSlug: string;
-  tableId: string;
-  tenantKey: string;
-  setAuth: (jwt: string, sessionId: string, tenantSlug: string, tableId: string, tenantKey: string) => void;
+  setAuth: (jwt: string | null, sessionId: string | null) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [jwt, setJwt] = useState('');
-  const [sessionId, setSessionId] = useState('');
-  const [tenantSlug, setTenantSlug] = useState('');
-  const [tableId, setTableId] = useState('');
-  const [tenantKey, setTenantKey] = useState('');
+  const [jwt, setJwt] = useState<string | null>(() => localStorage.getItem('jwt') || null);
+  const [sessionId, setSessionId] = useState<string | null>(() => localStorage.getItem('sessionId') || null);
+  
+  // Extract tenant slug from hostname
+  const hostname = window.location.hostname;
+  const tenantSlug = hostname.includes('.') ? hostname.split('.')[1] : 'MesaMagica';
 
-  const setAuth = (newJwt: string, newSessionId: string, newTenantSlug: string, newTableId: string, newTenantKey: string) => {
+  const setAuth = (newJwt: string | null, newSessionId: string | null) => {
+    console.log(`[${new Date().toISOString()}] Setting auth - JWT: ${newJwt ? 'present' : 'null'}, SessionID: ${newSessionId}`);
+    
     setJwt(newJwt);
     setSessionId(newSessionId);
-    setTenantSlug(newTenantSlug);
-    setTableId(newTableId);
-    setTenantKey(newTenantKey);
+    
+    if (newJwt) {
+      localStorage.setItem('jwt', newJwt);
+    } else {
+      localStorage.removeItem('jwt');
+    }
+    
+    if (newSessionId) {
+      localStorage.setItem('sessionId', newSessionId);
+    } else {
+      localStorage.removeItem('sessionId');
+    }
   };
 
+  useEffect(() => {
+    console.log(`[${new Date().toISOString()}] AppContext initialized - Tenant: ${tenantSlug}, JWT: ${jwt ? 'present' : 'null'}, SessionID: ${sessionId}`);
+  }, [tenantSlug, jwt, sessionId]);
+
   return (
-    <AppContext.Provider value={{ jwt, sessionId, tenantSlug, tableId, tenantKey, setAuth }}>
+    <AppContext.Provider value={{ jwt, sessionId, tenantSlug, setAuth }}>
       {children}
     </AppContext.Provider>
   );
