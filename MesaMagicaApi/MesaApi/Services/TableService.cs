@@ -151,5 +151,56 @@ namespace MesaApi.Services
                 CreatedAt = table.CreatedAt
             };
         }
+
+        // MesaMagicaApi/MesaApi/Services/TableService.cs
+        // Add this method to the TableService class
+
+        public async Task<TableResponse> ToggleTableOccupancyAsync(Guid tableId, ClaimsPrincipal user, string tenantKey)
+        {
+            if (string.IsNullOrEmpty(tenantKey))
+                throw new ArgumentException("Tenant key is missing.");
+
+            await ValidateAdminAndGetUserIdAsync(user, tenantKey);
+
+            var table = await _dbContext.RestaurantTables.FindAsync(tableId);
+            if (table == null)
+                throw new ArgumentException("Table not found");
+
+            // Toggle the occupancy status
+            table.IsOccupied = !table.IsOccupied;
+
+            // If marking as free, also close any active sessions for this table
+            if (!table.IsOccupied)
+            {
+                var activeSessions = await _dbContext.TableSessions
+                    .Where(s => s.TableId == tableId && s.IsActive)
+                    .ToListAsync();
+
+                foreach (var session in activeSessions)
+                {
+                    session.IsActive = false;
+                    session.EndedAt = DateTime.UtcNow;
+                    session.SessionCount = 0;
+                }
+
+                _logger.LogInformation(
+                    "Manually freed table {TableId}, closed {SessionCount} active sessions by {User}",
+                    tableId,
+                    activeSessions.Count,
+                    user.Identity?.Name
+                );
+            }
+
+            await _dbContext.SaveChangesAsync();
+
+            _logger.LogInformation(
+                "Table {TableId} occupancy toggled to {IsOccupied} by {User}",
+                tableId,
+                table.IsOccupied,
+                user.Identity?.Name
+            );
+
+            return MapToTableResponse(table);
+        }
     }
 }

@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, useRoutes, Navigate, useLocation } from "react-router-dom";
 import { AppProvider, useAppContext } from "@/context/AppContext";
 import { GlobalProvider } from "./context/GlobalContext";
+import { SessionTimeoutProvider } from "@/context/SessionTimeoutContext";
 import SessionInitializer from "@/components/SessionInitializer";
 import MainContent from "@/components/MainContent";
 import Login from "./components/Login";
@@ -18,6 +19,7 @@ import Orders from "./pages/admin/Orders";
 import Tables from "./pages/admin/Tables";
 import Staff from "./pages/admin/Staff";
 import EditCart from "./pages/admin/EditCart";
+import SessionManagement from "./pages/admin/SessionManagement";
 
 // Protected Route wrapper for admin pages
 const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean }> = ({ 
@@ -120,6 +122,14 @@ function App() {
       ),
     },
     {
+      path: "/admin/sessions",
+      element: (
+        <ProtectedRoute>
+          <SessionManagement />
+        </ProtectedRoute>
+      ),
+    },
+    {
       path: "/admin/tables",
       element: (
         <ProtectedRoute>
@@ -154,9 +164,11 @@ if (rootElement) {
     <BrowserRouter>
       <GlobalProvider>
         <AppProvider>
-          <SessionInitializer>
-            <App />
-          </SessionInitializer>
+          <SessionTimeoutProvider>
+            <SessionInitializer>
+              <App />
+            </SessionInitializer>
+          </SessionTimeoutProvider>
         </AppProvider>
       </GlobalProvider>
     </BrowserRouter>

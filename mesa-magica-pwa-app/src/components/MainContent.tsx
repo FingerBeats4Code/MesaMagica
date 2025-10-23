@@ -4,7 +4,7 @@ import { useAppContext } from "@/context/AppContext";
 import Menu from "@/components/Menu";
 import MyOrders from '@/components/MyOrders';
 import { useSearchParams } from 'react-router-dom';
-import { getCategories, getMenuItems, submitOrder, addToCartBackend, removeFromCartBackend, getCart, Category, MenuItemResponse, CartItem } from "@/api/api";
+import { getCategories, getMenuItems, submitOrder, addToCartBackend, removeFromCartBackend, getCart, getMyOrders, Category, MenuItemResponse, CartItem, OrderResponse } from "@/api/api";
 
 interface FoodCardProps {
   name: string;
@@ -15,11 +15,12 @@ interface FoodCardProps {
   onIncrement?: () => void;
   onDecrement?: () => void;
   quantity?: number;
+  disabled?: boolean;
 }
 
-const FoodCard: React.FC<FoodCardProps> = ({ name, price, description, imageSrc, onAddToCart, onIncrement, onDecrement, quantity = 0 }) => {
+const FoodCard: React.FC<FoodCardProps> = ({ name, price, description, imageSrc, onAddToCart, onIncrement, onDecrement, quantity = 0, disabled = false }) => {
   return (
-    <div className="bg-white/70 dark:bg-neutral-900/50 rounded-xl border border-zinc-300/70 dark:border-white/20 overflow-hidden hover:shadow-lg transition-shadow">
+    <div className={`bg-white/70 dark:bg-neutral-900/50 rounded-xl border border-zinc-300/70 dark:border-white/20 overflow-hidden hover:shadow-lg transition-shadow ${disabled ? 'opacity-60' : ''}`}>
       <img alt={name} src={imageSrc} className="object-cover w-full h-48" />
       <div className="p-6">
         <div className="items-start justify-between mb-2 flex">
@@ -33,27 +34,34 @@ const FoodCard: React.FC<FoodCardProps> = ({ name, price, description, imageSrc,
               type="button"
               className="border border-zinc-300/70 dark:border-white/20 flex hover:bg-neutral-100 dark:hover:bg-neutral-800 w-8 h-8 rounded-full items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={onDecrement}
-              disabled={quantity <= 0}
+              disabled={quantity <= 0 || disabled}
             >
               -
             </button>
             <span className="font-medium w-8 text-center">{quantity}</span>
             <button
               type="button"
-              className="border border-zinc-300/70 dark:border-white/20 flex hover:bg-neutral-100 dark:hover:bg-neutral-800 w-8 h-8 rounded-full items-center justify-center"
+              className="border border-zinc-300/70 dark:border-white/20 flex hover:bg-neutral-100 dark:hover:bg-neutral-800 w-8 h-8 rounded-full items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={onIncrement}
+              disabled={disabled}
             >
               +
             </button>
           </div>
           <button
             type="button"
-            className="hover:bg-neutral-700 dark:hover:bg-orange-600 transition-colors px-4 py-2 bg-neutral-900 dark:bg-orange-500 text-white rounded-lg text-sm font-medium"
+            className="hover:bg-neutral-700 dark:hover:bg-orange-600 transition-colors px-4 py-2 bg-neutral-900 dark:bg-orange-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={onAddToCart}
+            disabled={disabled}
           >
             Add to Cart
           </button>
         </div>
+        {disabled && (
+          <p className="text-xs text-orange-600 dark:text-orange-400 mt-2 text-center">
+            Order already placed - use cart to modify
+          </p>
+        )}
       </div>
     </div>
   );
@@ -75,12 +83,13 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
   const [menuItems, setMenuItems] = useState<MenuItemResponse[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [myOrders, setMyOrders] = useState<OrderResponse[]>([]);
+  const [hasActiveOrder, setHasActiveOrder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const { jwt, sessionId, tenantSlug } = useAppContext();
 
-  // Sync with external cart
   useEffect(() => {
     setCart(externalCart);
   }, [externalCart]);
@@ -107,15 +116,25 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
       console.log(`[${new Date().toISOString()}] Fetching initial data for tenant: ${tenantSlug}, tableId: ${tableId}, sessionId: ${sessionId}`);
       
       try {
-        const [cats, items] = await Promise.all([
+        const [cats, items, orders] = await Promise.all([
           getCategories(),
-          getMenuItems(selectedCategory ?? undefined)
+          getMenuItems(selectedCategory ?? undefined),
+          getMyOrders().catch(() => [])
         ]);
         
         setCategories(cats);
         setMenuItems(items);
+        setMyOrders(orders);
+
+        // Check if there are any active (non-closed) orders
+        const activeOrders = orders.filter(o => o.status.toLowerCase() !== 'closed');
+        setHasActiveOrder(activeOrders.length > 0);
+
+        if (activeOrders.length > 0) {
+          console.log(`[${new Date().toISOString()}] Found ${activeOrders.length} active order(s) - menu items disabled`);
+        }
         
-        console.log(`[${new Date().toISOString()}] ✅ Data loaded - Categories: ${cats.length}, Items: ${items.length}`);
+        console.log(`[${new Date().toISOString()}] ✅ Data loaded - Categories: ${cats.length}, Items: ${items.length}, Orders: ${orders.length}`);
       } catch (error) {
         console.error('Failed to fetch initial data:', error);
         setError('Failed to load menu. Please try refreshing the page.');
@@ -131,16 +150,33 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
     setSelectedCategory(categoryId);
   };
 
+  //-----------------CHANGE: Enhanced error handling for session expiration-----------------2025-01-22----------------------
+  // Added detection of 400/401 errors which indicate session is closed/invalid
+  // Automatically reloads page to create new session via SessionInitializer
   const handleAddToCart = async (item: MenuItemResponse) => {
     if (!sessionId) {
       alert('Session not initialized. Please try again.');
       return;
     }
+
+    if (hasActiveOrder) {
+      alert('You already have an active order. Please use the cart to modify your order or wait for it to be completed.');
+      return;
+    }
+
     try {
       await addToCartBackend(sessionId, item.itemId, 1);
       onCartUpdate();
-    } catch (error) {
-      alert('Error adding to cart');
+    } catch (error: any) {
+      console.error('Error adding to cart:', error);
+      
+      // Check if error is session-related (admin closed session)
+      if (error?.response?.status === 400 || error?.response?.status === 401) {
+        alert('Your session has expired. The page will reload to create a new session.');
+        window.location.reload();
+      } else {
+        alert('Error adding to cart. Please try again.');
+      }
     }
   };
 
@@ -149,11 +185,25 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
       alert('Session not initialized. Please try again.');
       return;
     }
+
+    if (hasActiveOrder) {
+      alert('You already have an active order. Please use the cart to modify your order.');
+      return;
+    }
+
     try {
       await addToCartBackend(sessionId, itemId, 1);
       onCartUpdate();
-    } catch (error) {
-      alert('Error updating cart');
+    } catch (error: any) {
+      console.error('Error updating cart:', error);
+      
+      // Check if error is session-related
+      if (error?.response?.status === 400 || error?.response?.status === 401) {
+        alert('Your session has expired. The page will reload to create a new session.');
+        window.location.reload();
+      } else {
+        alert('Error updating cart. Please try again.');
+      }
     }
   };
 
@@ -162,27 +212,58 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
       alert('Session not initialized. Please try again.');
       return;
     }
+
     try {
       await removeFromCartBackend(sessionId, itemId);
       onCartUpdate();
-    } catch (error) {
-      alert('Error updating cart');
+    } catch (error: any) {
+      console.error('Error updating cart:', error);
+      
+      // Check if error is session-related
+      if (error?.response?.status === 400 || error?.response?.status === 401) {
+        alert('Your session has expired. The page will reload to create a new session.');
+        window.location.reload();
+      } else {
+        alert('Error updating cart. Please try again.');
+      }
     }
   };
+  //-----------------END CHANGE----------------------
 
   const handlePlaceOrder = async () => {
     if (!sessionId) {
       alert('Session not initialized. Please try again.');
       return;
     }
+
+    if (hasActiveOrder) {
+      alert('You already have an active order. Please wait for it to be completed before placing a new order.');
+      return;
+    }
+
+    //-----------------CHANGE: Added session error handling for order submission-----------------2025-01-22----------------------
     try {
       const orderResponse = await submitOrder(sessionId, { tableId });
       alert(`Order submitted successfully! Order ID: ${orderResponse.orderId}`);
+      setHasActiveOrder(true);
       onCartUpdate();
       onCloseCart();
-    } catch (error) {
-      alert('Error submitting order');
+      
+      // Refresh orders list
+      const orders = await getMyOrders();
+      setMyOrders(orders);
+    } catch (error: any) {
+      console.error('Error submitting order:', error);
+      
+      // Check if error is session-related
+      if (error?.response?.status === 400 || error?.response?.status === 401) {
+        alert('Your session has expired. The page will reload to create a new session.');
+        window.location.reload();
+      } else {
+        alert('Error submitting order. Please try again.');
+      }
     }
+    //-----------------END CHANGE----------------------
   };
 
   if (!jwt || !sessionId) {
@@ -232,6 +313,22 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
   return (
     <>
       <main className="mx-auto px-8 relative z-20 max-w-7xl">
+        {hasActiveOrder && (
+          <div className="mb-6 p-4 rounded-xl bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800">
+            <div className="flex items-start gap-3">
+              <svg className="w-6 h-6 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div className="flex-1">
+                <p className="font-semibold text-orange-900 dark:text-orange-100">Active Order in Progress</p>
+                <p className="text-sm text-orange-700 dark:text-orange-300 mt-1">
+                  You already have an order being prepared. Use your cart to modify the current order, or wait for it to be completed before placing a new order.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="text-center py-16">
           <div className="space-y-6">
             <div className="items-center px-4 py-2 rounded-full bg-white/70 text-sm dark:bg-white/10 inline-flex gap-2 border border-zinc-300/70 dark:border-white/20">
@@ -274,6 +371,7 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
                     onIncrement={() => handleIncrement(item.itemId)}
                     onDecrement={() => handleDecrement(item.itemId)}
                     quantity={cart.find((cartItem) => cartItem.menuItem.itemId === item.itemId)?.quantity || 0}
+                    disabled={hasActiveOrder}
                   />
                 ))}
               </div>
@@ -330,7 +428,8 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
                           <span className="w-8 text-center">{quantity}</span>
                           <button
                             onClick={() => handleIncrement(menuItem.itemId)}
-                            className="w-6 h-6 rounded-full border border-zinc-300/70 dark:border-white/20 flex items-center justify-center hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                            className="w-6 h-6 rounded-full border border-zinc-300/70 dark:border-white/20 flex items-center justify-center hover:bg-neutral-100 dark:hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={hasActiveOrder}
                           >
                             +
                           </button>
@@ -355,10 +454,16 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
                 </div>
                 <button
                   onClick={handlePlaceOrder}
-                  className="w-full bg-neutral-900 dark:bg-orange-500 text-white py-3 rounded-lg font-medium hover:bg-neutral-700 dark:hover:bg-orange-600 transition-colors"
+                  disabled={hasActiveOrder}
+                  className="w-full bg-neutral-900 dark:bg-orange-500 text-white py-3 rounded-lg font-medium hover:bg-neutral-700 dark:hover:bg-orange-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  Place Order
+                  {hasActiveOrder ? 'Order Already Placed' : 'Place Order'}
                 </button>
+                {hasActiveOrder && (
+                  <p className="text-xs text-center text-orange-600 dark:text-orange-400 mt-2">
+                    Use cart to modify your current order
+                  </p>
+                )}
               </div>
             )}
           </div>

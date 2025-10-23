@@ -24,12 +24,16 @@ namespace MesaApi.Services
             if (string.IsNullOrEmpty(tenantKey))
                 throw new ArgumentException("Tenant key is missing.");
 
+            // Get TODAY'S orders (including closed ones for display)
+            var today = DateTime.UtcNow.Date;
+            var tomorrow = today.AddDays(1);
+
             var orders = await _dbContext.Orders
                 .Include(o => o.OrderItems)
                     .ThenInclude(oi => oi.MenuItem)
                 .Include(o => o.Session)
                     .ThenInclude(s => s.Table)
-                .Where(o => o.Status != OrderStatus.Closed)
+                .Where(o => o.CreatedAt >= today && o.CreatedAt < tomorrow)
                 .OrderByDescending(o => o.CreatedAt)
                 .ToListAsync();
 
@@ -49,7 +53,7 @@ namespace MesaApi.Services
                     Quantity = oi.Quantity,
                     Price = oi.Price
                 }).ToList(),
-                PaymentStatus = "pending" // TODO: Implement payment tracking
+                PaymentStatus = o.Status == OrderStatus.Closed ? "paid" : "pending"
             }).ToList();
         }
 
@@ -58,37 +62,99 @@ namespace MesaApi.Services
             if (string.IsNullOrEmpty(tenantKey))
                 throw new ArgumentException("Tenant key is missing.");
 
-            // Validate user has staff or admin role
             if (!user.IsInRole(Roles.Admin) && !user.IsInRole(Roles.Staff))
                 throw new UnauthorizedAccessException("Insufficient permissions");
 
             var order = await _dbContext.Orders
+                .Include(o => o.Session)
+                    .ThenInclude(s => s.Table)
                 .FirstOrDefaultAsync(o => o.OrderId == orderId);
 
             if (order == null)
                 throw new ArgumentException("Order not found");
 
-            // Validate status
             var validStatuses = new[] { OrderStatus.Pending, OrderStatus.Preparing, OrderStatus.Served, OrderStatus.Closed };
             if (!validStatuses.Contains(status))
                 throw new ArgumentException($"Invalid status. Valid statuses: {string.Join(", ", validStatuses)}");
 
+            var previousStatus = order.Status;
             order.Status = status;
             order.UpdatedAt = DateTime.UtcNow;
 
+            // FIXED: Only close session when ALL orders are closed
+            if (status.Equals(OrderStatus.Closed, StringComparison.OrdinalIgnoreCase) && order.Session != null)
+            {
+                var session = order.Session;
+
+                _logger.LogInformation(
+                    "Order {OrderId} closed. Checking if all orders for session {SessionId} are closed",
+                    orderId,
+                    session.SessionId
+                );
+
+                // Check if there are any other unpaid orders in this session
+                var hasUnpaidOrders = await _dbContext.Orders
+                    .AnyAsync(o => o.SessionId == session.SessionId &&
+                                  o.OrderId != orderId &&
+                                  o.Status != OrderStatus.Closed);
+
+                if (!hasUnpaidOrders)
+                {
+                    // All orders are closed - close the session
+                    _logger.LogInformation(
+                        "All orders closed for session {SessionId}. Closing session and freeing table {TableId}",
+                        session.SessionId,
+                        session.TableId
+                    );
+
+                    session.IsActive = false;
+                    session.EndedAt = DateTime.UtcNow;
+                    session.SessionCount = 0;
+
+                    if (session.Table != null)
+                    {
+                        session.Table.IsOccupied = false;
+                        _dbContext.RestaurantTables.Update(session.Table);
+                    }
+
+                    _dbContext.TableSessions.Update(session);
+
+                    // Clear cart items
+                    var cartItems = await _dbContext.CartItems
+                        .Where(c => c.SessionId == session.SessionId)
+                        .ToListAsync();
+
+                    if (cartItems.Any())
+                    {
+                        _dbContext.CartItems.RemoveRange(cartItems);
+                    }
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "Order {OrderId} closed but session {SessionId} still has unpaid orders. Session remains active.",
+                        orderId,
+                        session.SessionId
+                    );
+                }
+            }
+
             await _dbContext.SaveChangesAsync();
 
-            _logger.LogInformation("Order {OrderId} status updated to {Status} by {User}",
-                orderId, status, user.Identity?.Name);
+            _logger.LogInformation(
+                "Order {OrderId} status updated from {PreviousStatus} to {Status} by {User}",
+                orderId,
+                previousStatus,
+                status,
+                user.Identity?.Name
+            );
         }
 
-        // MesaMagicaApi/MesaApi/Services/AdminService.cs (verify this exists)
         public async Task EditOrderAsync(Guid orderId, List<EditOrderItemRequest> items, ClaimsPrincipal user, string tenantKey)
         {
             if (string.IsNullOrEmpty(tenantKey))
                 throw new ArgumentException("Tenant key is missing.");
 
-            // Only admin can edit orders
             await ValidateAdminAndGetUserIdAsync(user, tenantKey);
 
             var order = await _dbContext.Orders
@@ -98,11 +164,9 @@ namespace MesaApi.Services
             if (order == null)
                 throw new ArgumentException("Order not found");
 
-            // Cannot edit closed orders
             if (order.Status == OrderStatus.Closed)
                 throw new InvalidOperationException("Cannot edit closed orders");
 
-            // Update items
             foreach (var item in items)
             {
                 var existingItem = order.OrderItems.FirstOrDefault(oi => oi.ItemId == item.ItemId);
@@ -135,7 +199,6 @@ namespace MesaApi.Services
                 }
             }
 
-            // Recalculate total
             order.TotalAmount = order.OrderItems.Sum(oi => oi.Price * oi.Quantity);
             order.UpdatedAt = DateTime.UtcNow;
 
@@ -149,7 +212,6 @@ namespace MesaApi.Services
             if (string.IsNullOrEmpty(tenantKey))
                 throw new ArgumentException("Tenant key is missing.");
 
-            // Only admin can edit carts
             await ValidateAdminAndGetUserIdAsync(user, tenantKey);
 
             var cartItem = await _dbContext.CartItems
@@ -200,7 +262,6 @@ namespace MesaApi.Services
             if (string.IsNullOrEmpty(tenantKey))
                 throw new ArgumentException("Tenant key is missing.");
 
-            // Validate user has staff or admin role
             if (!user.IsInRole(Roles.Admin) && !user.IsInRole(Roles.Staff))
                 throw new UnauthorizedAccessException("Insufficient permissions");
 
@@ -210,8 +271,6 @@ namespace MesaApi.Services
             if (order == null)
                 throw new ArgumentException("Order not found");
 
-            // TODO: Implement actual payment tracking
-            // For now, return mock data
             return new PaymentResponse
             {
                 OrderId = orderId,

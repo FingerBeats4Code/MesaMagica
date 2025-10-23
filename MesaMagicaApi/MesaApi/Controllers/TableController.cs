@@ -132,7 +132,38 @@ namespace MesaApi.Controllers
                 return StatusCode(500, "Error deleting table");
             }
         }
+
+        // MesaMagicaApi/MesaApi/Controllers/TableController.cs
+        // Add this method to the TableController class
+
+        [HttpPatch("{tableId}/toggle-occupancy")]
+        public async Task<IActionResult> ToggleTableOccupancy(Guid tableId)
+        {
+            var tenantKey = User.FindFirst(JwtClaims.TenantKey)?.Value;
+            if (string.IsNullOrEmpty(tenantKey))
+                return Unauthorized("Tenant key not found in JWT.");
+
+            try
+            {
+                var table = await _tableService.ToggleTableOccupancyAsync(tableId, User, tenantKey);
+                return Ok(new
+                {
+                    message = $"Table occupancy updated to {(table.IsOccupied ? "occupied" : "free")}",
+                    table
+                });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(ex.Message);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error toggling table occupancy");
+                return StatusCode(500, "Error toggling table occupancy");
+            }
+        }
     }
+
 
     public class CreateTableRequest
     {

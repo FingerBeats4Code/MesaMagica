@@ -1,7 +1,8 @@
+// mesa-magica-pwa-app/src/components/SessionInitializer.tsx
 import React, { useEffect, useRef } from 'react';
 import { useAppContext } from '@/context/AppContext';
 import { useSearchParams } from 'react-router-dom';
-import { startSession } from '@/api/api';
+import { startSession, getCart } from '@/api/api';
 
 const SessionInitializer: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { jwt, sessionId, setAuth, tenantSlug } = useAppContext();
@@ -44,15 +45,47 @@ const SessionInitializer: React.FC<{ children: React.ReactNode }> = ({ children 
       return sessionAge < maxAge;
     };
 
+    //-----------------CHANGE: Added server-side session verification-----------------2025-01-22----------------------
+    // Verify session is still active on server by attempting to fetch cart
+    // This prevents using closed sessions that admin may have terminated
+    const verifySession = async (session: any) => {
+      try {
+        // Try to get cart - this will fail if session is closed
+        await getCart(session.sessionId);
+        console.log(`[${new Date().toISOString()}] ✅ Session verified active on server`);
+        return true;
+      } catch (error: any) {
+        console.log(`[${new Date().toISOString()}] ❌ Session verification failed:`, error?.response?.status, error?.response?.data);
+        return false;
+      }
+    };
+    //-----------------END CHANGE----------------------
+
     // Use existing session if available and valid for this tableId
     if (isSessionValid(storedSession)) {
       console.log(`[${new Date().toISOString()}] Found valid stored session for tableId: ${tableId}, sessionId: ${storedSession.sessionId}`);
       
-      // Set the stored session if not already set or if it's different
-      if (jwt !== storedSession.jwt || sessionId !== storedSession.sessionId) {
-        console.log(`[${new Date().toISOString()}] Restoring stored session`);
-        setAuth(storedSession.jwt, storedSession.sessionId);
-      }
+      //-----------------CHANGE: Verify session is still active on server-----------------2025-01-22----------------------
+      // Before restoring session, check if it's still active on the server
+      // Admin may have closed it, causing cart operations to fail
+      verifySession(storedSession).then(isActive => {
+        if (isActive) {
+          // Set the stored session if not already set or if it's different
+          if (jwt !== storedSession.jwt || sessionId !== storedSession.sessionId) {
+            console.log(`[${new Date().toISOString()}] Restoring stored session`);
+            setAuth(storedSession.jwt, storedSession.sessionId);
+          }
+        } else {
+          console.log(`[${new Date().toISOString()}] ⚠️ Stored session is closed on server - creating new session`);
+          // Remove closed session from localStorage
+          delete storedSessions[tableId];
+          localStorage.setItem('sessions', JSON.stringify(storedSessions));
+          setAuth(null, null);
+          // Trigger re-initialization by resetting flag
+          isInitializing.current = false;
+        }
+      });
+      //-----------------END CHANGE----------------------
       return;
     } else if (storedSession) {
       console.log(`[${new Date().toISOString()}] Stored session for tableId ${tableId} is invalid or expired - creating new session`);
@@ -99,12 +132,15 @@ const SessionInitializer: React.FC<{ children: React.ReactNode }> = ({ children 
       } catch (error: any) {
         console.error(`[${new Date().toISOString()}] ❌ Failed to start session for tableId: ${tableId}`, error);
         
-        // If 401 Unauthorized, clear all stored sessions
-        if (error?.response?.status === 401) {
-          console.log(`[${new Date().toISOString()}] Got 401 - clearing all stored sessions`);
+        //-----------------CHANGE: Handle session closed/invalid errors-----------------2025-01-22----------------------
+        // If 401 Unauthorized or 400 Bad Request (session closed), clear all stored sessions
+        // This ensures a fresh start when session is invalidated
+        if (error?.response?.status === 401 || error?.response?.status === 400) {
+          console.log(`[${new Date().toISOString()}] Got ${error?.response?.status} - clearing all stored sessions`);
           localStorage.removeItem('sessions');
           setAuth(null, null);
         }
+        //-----------------END CHANGE----------------------
       } finally {
         isInitializing.current = false;
       }
@@ -115,7 +151,10 @@ const SessionInitializer: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => {
       isInitializing.current = false;
     };
-  }, [tableId, tenantSlug]); // Only depend on tableId and tenantSlug
+    //-----------------CHANGE: Added jwt and sessionId to dependencies-----------------2025-01-22----------------------
+    // This ensures the effect re-runs when session changes, enabling proper re-initialization
+  }, [tableId, tenantSlug, jwt, sessionId, setAuth]);
+    //-----------------END CHANGE----------------------
 
   return <>{children}</>;
 };

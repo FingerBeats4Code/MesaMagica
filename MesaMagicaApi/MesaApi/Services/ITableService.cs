@@ -11,5 +11,6 @@ namespace MesaApi.Services
         Task<TableResponse> GetTableAsync(Guid tableId, string tenantKey); // CHANGED
         Task<TableResponse> UpdateTableAsync(Guid tableId, UpdateTableRequest request, ClaimsPrincipal user, string tenantKey); // CHANGED
         Task DeleteTableAsync(Guid tableId, ClaimsPrincipal user, string tenantKey); // CHANGED
+        Task<TableResponse> ToggleTableOccupancyAsync(Guid tableId, ClaimsPrincipal user, string tenantKey);
     }
 }

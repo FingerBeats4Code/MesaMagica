@@ -91,5 +91,44 @@ public class SessionsController : ControllerBase
             return BadRequest("Invalid QR code URL format.");
         }
     }
+
+    // MesaMagicaApi/MesaApi/Controllers/SessionsController.cs
+    // Add this method to the SessionsController class
+
+    [HttpPost("close")]
+    [SwaggerOperation(Summary = "Closes a session and frees the table")]
+    [SwaggerResponse(200, "Session closed successfully")]
+    [SwaggerResponse(400, "Invalid request")]
+    [SwaggerResponse(404, "Session not found")]
+    public async Task<IActionResult> CloseSession([FromBody] CloseSessionRequest request, CancellationToken ct)
+    {
+        if (request.SessionId == Guid.Empty)
+        {
+            _logger.LogWarning("Invalid session ID in close request");
+            return BadRequest("Invalid session ID");
+        }
+
+        try
+        {
+            await _sessionService.CloseSessionAsync(request.SessionId, ct);
+            return Ok(new { message = "Session closed successfully" });
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogWarning(ex, "Session not found: {SessionId}", request.SessionId);
+            return NotFound(ex.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error closing session: {SessionId}", request.SessionId);
+            return StatusCode(500, "Error closing session");
+        }
+    }
+
+    // Add this class at the bottom of the file
+    public class CloseSessionRequest
+    {
+        public Guid SessionId { get; set; }
+    }
 }
 

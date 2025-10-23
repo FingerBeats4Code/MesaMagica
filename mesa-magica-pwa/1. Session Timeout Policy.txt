@@ -1,0 +1,58 @@
+1. Session Timeout Policy
+2. Active Order Check
+
+If there’s an active unpaid order, don’t close immediately.
+
+Instead, mark it as pending verification and notify staff to confirm:
+
+Either “Customer left without paying”
+
+Or “Still active order”
+
+
+3. Automatic Cleanup Job (Scheduler)
+
+Run a background service every few minutes (e.g., HostedService in .NET) that:
+
+Checks stale sessions (inactive > threshold)
+
+Frees the table and closes order/session
+
+Optionally logs this in “SessionAudit”
+
+4. Heartbeat / Keep-Alive
+
+When the customer app or browser is open, send periodic “keep-alive” pings.
+
+If pings stop (browser closed, no action in 30 mins), auto-close the session.
+
+6. Notifications
+
+Notify:
+
+Customer: “Your session will expire in 10 mins.”
+
+Staff: “Table #4 occupied for more than 2 hours without activity.”
+
+
+7. Edge Case Handling
+
+Customer scans but doesn’t order → Auto-close after 15–20 mins.
+
+Order placed but not paid → Keep until payment timeout or manual action.
+
+Action	System Behavior
+Customer scans QR	Create session with timestamp
+Customer leaves without ordering	Session expires after X mins, table auto-freed
+Customer orders but doesn’t pay	Mark as pending; alert staff after threshold
+Staff forgets to close table	Cleanup job closes automatically after Y hours
+
+
+⚙️ SignalR in Multitenant Systems
+✅ Works Well When
+
+Each tenant (restaurant) has isolated hubs or groups.
+
+You use scaling backplane (e.g., Redis or Azure SignalR Service).
+
+You manage connections per tenant, not globally.

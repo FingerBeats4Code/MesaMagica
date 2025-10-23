@@ -161,6 +161,74 @@ export interface CurrentUserResponse {
   isAuthenticated: boolean;
 }
 
+export interface ActiveSessionResponse {
+  sessionId: string;
+  tableId: string;
+  tableNumber: string;
+  startedAt: string;
+  sessionCount: number;
+  activeMinutes: number;
+  hasOrders: boolean;
+  totalOrders: number;
+  unpaidOrders: number;
+  pendingOrders: number;
+  preparingOrders: number;
+  servedOrders: number;
+  totalAmount: number;
+  cartItemCount: number;
+}
+
+export interface SessionDetailsResponse {
+  sessionId: string;
+  tableId: string;
+  tableNumber: string;
+  isActive: boolean;
+  startedAt: string;
+  endedAt?: string;
+  sessionCount: number;
+  activeMinutes?: number;
+  orders: Array<{
+    orderId: string;
+    status: string;
+    totalAmount: number;
+    createdAt: string;
+    updatedAt: string;
+    items: Array<{
+      orderItemId: string;
+      itemId: string;
+      itemName: string;
+      quantity: number;
+      price: number;
+      subtotal: number;
+    }>;
+  }>;
+  totalOrderCount: number;
+  totalOrderAmount: number;
+  unpaidOrderCount: number;
+  unpaidAmount: number;
+  cartItems: Array<{
+    id: string;
+    itemId: string;
+    itemName: string;
+    quantity: number;
+    price: number;
+    subtotal: number;
+    addedAt: string;
+  }>;
+  cartItemCount: number;
+  cartTotal: number;
+}
+
+export interface CloseSessionResponse {
+  message: string;
+  sessionId: string;
+  tableNumber: string;
+  closedBy: string;
+  closedAt: string;
+  remainingSessionCount: number;
+  tableStillOccupied: boolean;
+}
+
 // ==================== AXIOS CONFIGURATION ====================
 
 const api = axios.create({
@@ -323,6 +391,24 @@ api.interceptors.response.use(
     if (status === 400) {
       console.error(`[${timestamp}] ⚠️ 400 Bad Request:`, error.response.data);
       const errorData = error.response.data as { message?: string };
+   
+      //-----------------CHANGE: Detect and handle session-related errors-----------------2025-01-22----------------------
+      // Check if error is related to closed/invalid session
+      // Keywords: 'Session', 'session', 'inactive' indicate session problems
+      // When detected, clear customer auth and reload to reinitialize session
+      if (errorData?.message?.includes('Session') || 
+          errorData?.message?.includes('session') ||
+          errorData?.message?.includes('inactive')) {
+        console.log(`[${timestamp}] 🔄 Session error detected - clearing session data`);
+        TokenManager.clearCustomerAuth();
+        
+        // Force page reload to reinitialize session
+        // This creates a new session automatically via SessionInitializer
+        window.location.reload();
+        return Promise.reject(error);
+      }
+      //-----------------END CHANGE----------------------
+      
       return Promise.reject({
         message: errorData?.message || 'Invalid request.',
         status: 400,
@@ -334,7 +420,49 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
-
+//-----------------CHANGE: Added session validation helper function-----------------2025-01-22----------------------
+// ==================== SESSION VALIDATION ====================
+/**
+ * Validate that the current session is still active on the server
+ * Returns true if valid, false if session needs to be reinitialized
+ * 
+ * Purpose: Prevents operations on closed sessions by checking server-side status
+ * Usage: Call before critical operations like cart modifications or order placement
+ * 
+ * @param sessionId - The session ID to validate
+ * @returns Promise<boolean> - true if session is active, false otherwise
+ */
+export const validateSession = async (sessionId: string): Promise<boolean> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🔍 Validating session: ${sessionId}`);
+    // Attempt to fetch cart - this will fail if session is inactive
+    await getCart(sessionId);
+    console.log(`[${new Date().toISOString()}] ✅ Session is valid`);
+    return true;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Session validation failed:`, error?.response?.status);
+    
+    // If session is invalid (400/401), clear stored session data
+    if (error?.response?.status === 400 || error?.response?.status === 401) {
+      const searchParams = new URLSearchParams(window.location.search);
+      const tableId = searchParams.get('tableId');
+      
+      if (tableId) {
+        // Remove invalid session from localStorage
+        const sessions = JSON.parse(localStorage.getItem('sessions') || '{}');
+        delete sessions[tableId];
+        localStorage.setItem('sessions', JSON.stringify(sessions));
+        console.log(`[${new Date().toISOString()}] 🗑️ Removed invalid session for table ${tableId}`);
+      }
+      
+      // Clear customer authentication tokens
+      TokenManager.clearCustomerAuth();
+    }
+    
+    return false;
+  }
+};
+//-----------------END CHANGE----------------------
 // ==================== CUSTOMER ENDPOINTS ====================
 
 export const startSession = async (payload: StartSessionRequest): Promise<SessionResponse> => {
@@ -741,7 +869,7 @@ export const getSessionDetails = async (sessionId: string): Promise<any> => {
 /**
  * Update order status and close session if status is "Closed"
  */
-export const updateOrderStatusWithSession = async (payload: UpdateOrderRequest): Promise<void> => {
+export const updateOrderStatusWithSession = async (payload: UpdateOrderRequest): Promise<void> =>         {
   try {
     console.log(`[${new Date().toISOString()}] 📝 Updating order status for orderId: ${payload.orderId} to ${payload.status}`);
     
@@ -767,6 +895,67 @@ export const updateOrderStatusWithSession = async (payload: UpdateOrderRequest):
     }
   } catch (error: any) {
     console.error(`[${new Date().toISOString()}] ❌ Error updating order status:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// mesa-magica-pwa-app/src/api/api.ts
+// Add this function to the existing api.ts file
+
+export const toggleTableOccupancy = async (tableId: number): Promise<TableResponse> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🔄 Toggling table occupancy: ${tableId}`);
+    const response = await api.patch(`/api/admin/tables/${tableId}/toggle-occupancy`);
+    console.log(`[${new Date().toISOString()}] ✅ Table occupancy toggled successfully`);
+    return response.data.table;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error toggling table occupancy:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+// ==================== ADMIN SESSION ENDPOINTS ====================
+
+/**
+ * Get all active sessions with details
+ */
+export const getActiveSessions = async (): Promise<ActiveSessionResponse[]> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 📋 Fetching active sessions`);
+    const response = await api.get('/api/admin/sessions/active');
+    console.log(`[${new Date().toISOString()}] ✅ Retrieved ${response.data.length} active sessions`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching active sessions:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+/**
+ * Manually close a session (admin action)
+ */
+export const closeSessionAdmin = async (sessionId: string): Promise<CloseSessionResponse> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🔒 Admin closing session: ${sessionId}`);
+    const response = await api.post(`/api/admin/sessions/${sessionId}/close`);
+    console.log(`[${new Date().toISOString()}] ✅ Session closed successfully`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error closing session:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+/**
+ * Get detailed session information including orders and cart
+ */
+export const getSessionDetailsAdmin = async (sessionId: string): Promise<SessionDetailsResponse> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 📋 Fetching session details: ${sessionId}`);
+    const response = await api.get(`/api/admin/sessions/${sessionId}`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching session details:`, error.response?.data || error.message);
     throw error;
   }
 };

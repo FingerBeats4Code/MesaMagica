@@ -7,6 +7,9 @@ const MyOrders: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  //-----------------CHANGE: Enhanced error handling for session-related failures-----------------2025-01-22----------------------
+  // Detects 400/401/404 errors which indicate session is closed or invalid
+  // Shows user-friendly message advising to refresh the page
   useEffect(() => {
     const fetchOrders = async () => {
       try {
@@ -14,7 +17,19 @@ const MyOrders: React.FC = () => {
         const data = await getMyOrders();
         setOrders(data);
       } catch (err: any) {
-        setError(err.message || 'Failed to load orders');
+        console.error('Error fetching orders:', err);
+        
+        // Check if error is session-related
+        // 400: Session closed/invalid
+        // 401: Unauthorized/expired token
+        // 404: Resource not found (session doesn't exist)
+        if (err?.response?.status === 400 || 
+            err?.response?.status === 401 || 
+            err?.response?.status === 404) {
+          setError('Unable to load orders. Your session may have expired. Please refresh the page to continue.');
+        } else {
+          setError(err.message || 'Failed to load orders');
+        }
       } finally {
         setLoading(false);
       }
@@ -22,6 +37,7 @@ const MyOrders: React.FC = () => {
 
     fetchOrders();
   }, []);
+  //-----------------END CHANGE----------------------
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
@@ -45,6 +61,14 @@ const MyOrders: React.FC = () => {
     return (
       <div className="rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4">
         <p className="text-red-600 dark:text-red-400">{error}</p>
+        {/*//-----------------CHANGE: Added refresh button for user convenience-----------------2025-01-22----------------------*/}
+        <button 
+          onClick={() => window.location.reload()} 
+          className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
+        >
+          Refresh Page
+        </button>
+        {/*//-----------------END CHANGE----------------------*/}
       </div>
     );
   }

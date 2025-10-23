@@ -1,3 +1,4 @@
+using MesaApi.Models;
 using MesaApi.Multitenancy;
 using MesaApi.Services;
 using MesaMagica.Api.Catalog;
@@ -96,6 +97,11 @@ builder.Services.Configure<JwtSettings>(options =>
 });
 //------------------end changes----------------------
 
+//------------------changes for session timeout configuration----------------------
+builder.Services.Configure<SessionTimeoutSettings>(
+    builder.Configuration.GetSection("SessionTimeout"));
+//------------------end changes----------------------
+
 builder.Services.AddHttpContextAccessor();
 
 builder.Services.AddDbContext<CatalogDbContext>(opt =>
@@ -131,6 +137,22 @@ builder.Services.AddScoped<ITenantContext>(sp =>
 
 builder.Services.AddMesaMagicaServices(builder.Configuration);
 
+//------------------changes for session timeout background service----------------------
+// Register session timeout background service
+builder.Services.AddHostedService<SessionTimeoutService>();
+
+//------------------FUTURE SIGNALR MIGRATION----------------------
+// TODO: Add SignalR with Redis backplane
+// builder.Services.AddSignalR()
+//     .AddStackExchangeRedis(builder.Configuration.GetConnectionString("Redis"), options =>
+//     {
+//         options.Configuration.ChannelPrefix = "mesamagica";
+//     });
+// 
+// builder.Services.AddScoped<INotificationHub, NotificationHub>();
+//------------------END FUTURE SIGNALR----------------------
+//------------------end changes----------------------
+
 var jwt = builder.Configuration.GetSection("Jwt");
 var key = Encoding.UTF8.GetBytes(jwt["Key"]!);
 
@@ -155,6 +177,23 @@ builder.Services.AddAuthentication(o =>
         ClockSkew = TimeSpan.Zero // Remove default 5 minute grace period
         //------------------end changes----------------------
     };
+
+    //------------------FUTURE SIGNALR AUTHENTICATION----------------------
+    // Enable JWT authentication for SignalR WebSocket connections
+    // o.Events = new JwtBearerEvents
+    // {
+    //     OnMessageReceived = context =>
+    //     {
+    //         var accessToken = context.Request.Query["access_token"];
+    //         var path = context.HttpContext.Request.Path;
+    //         if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
+    //         {
+    //             context.Token = accessToken;
+    //         }
+    //         return Task.CompletedTask;
+    //     }
+    // };
+    //------------------END FUTURE SIGNALR----------------------
 });
 
 var app = builder.Build();
@@ -174,6 +213,12 @@ app.UseGlobalExceptionHandler();
 app.UseTenantResolution();
 app.UseAuthentication();
 app.UseAuthorization();
+
+//------------------FUTURE SIGNALR HUB MAPPING----------------------
+// Map SignalR hubs
+// app.MapHub<NotificationHub>("/hubs/notifications");
+//------------------END FUTURE SIGNALR----------------------
+
 app.MapControllers();
 
 app.Run();

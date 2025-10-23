@@ -1,6 +1,6 @@
 // mesa-magica-pwa-app/src/pages/admin/Tables.tsx
 import React, { useState, useEffect } from "react";
-import { createTable, getTables, deleteTable, TableResponse, CreateTableRequest } from "@/api/api";
+import { createTable, getTables, deleteTable, toggleTableOccupancy, TableResponse, CreateTableRequest } from "@/api/api";
 
 type FilterStatus = 'all' | 'occupied' | 'free';
 
@@ -16,6 +16,9 @@ const Tables: React.FC = () => {
 
   useEffect(() => {
     fetchTables();
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(fetchTables, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchTables = async () => {
@@ -63,8 +66,29 @@ const Tables: React.FC = () => {
     }
   };
 
+  const handleToggleOccupancy = async (tableId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    const table = tables.find(t => t.tableId === tableId);
+    const action = table?.isOccupied ? 'free' : 'occupy';
+    
+    if (!confirm(`Are you sure you want to mark this table as ${action}?`)) return;
+    
+    try {
+      await toggleTableOccupancy(tableId);
+      await fetchTables();
+      
+      // Update selected table if it's the one being toggled
+      if (selectedTable?.tableId === tableId) {
+        const updatedTable = await getTables();
+        setSelectedTable(updatedTable.find(t => t.tableId === tableId) || null);
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to toggle table occupancy");
+    }
+  };
+
   const handleDownloadQR = (table: TableResponse) => {
-    // Create a download link
     const link = document.createElement('a');
     link.href = table.qrCodeUrl;
     link.download = `${table.tableNumber}-QR.png`;
@@ -85,7 +109,7 @@ const Tables: React.FC = () => {
     free: tables.filter(t => !t.isOccupied).length,
   };
 
-  if (loading) {
+  if (loading && tables.length === 0) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
@@ -97,20 +121,33 @@ const Tables: React.FC = () => {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-3xl font-bold">Manage Tables</h1>
-        <button
-          onClick={() => setShowCreateForm(true)}
-          className="bg-orange-500 text-white rounded-lg py-2 px-4 hover:bg-orange-600 flex items-center gap-2"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          Create New Table
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={fetchTables}
+            className="bg-blue-500 text-white rounded-lg py-2 px-4 hover:bg-blue-600 flex items-center gap-2"
+            disabled={loading}
+          >
+            <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Refresh
+          </button>
+          <button
+            onClick={() => setShowCreateForm(true)}
+            className="bg-orange-500 text-white rounded-lg py-2 px-4 hover:bg-orange-600 flex items-center gap-2"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Create New Table
+          </button>
+        </div>
       </div>
 
       {error && (
         <div className="mb-4 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4">
           <p className="text-red-600 dark:text-red-400">{error}</p>
+          <button onClick={() => setError('')} className="text-sm underline mt-2">Dismiss</button>
         </div>
       )}
 
@@ -231,16 +268,41 @@ const Tables: React.FC = () => {
 
             <div className="flex gap-2">
               <button
+                onClick={(e) => handleToggleOccupancy(table.tableId, e)}
+                className={`flex-1 rounded-lg py-2 text-sm font-medium transition-colors flex items-center justify-center gap-1 ${
+                  table.isOccupied
+                    ? 'bg-green-500 text-white hover:bg-green-600'
+                    : 'bg-gray-500 text-white hover:bg-gray-600'
+                }`}
+                title={table.isOccupied ? 'Mark as Free' : 'Mark as Occupied'}
+              >
+                {table.isOccupied ? (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Free Table
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                    Occupy
+                  </>
+                )}
+              </button>
+              <button
                 onClick={(e) => {
                   e.stopPropagation();
                   handleDownloadQR(table);
                 }}
-                className="flex-1 bg-blue-500 text-white rounded-lg py-2 text-sm hover:bg-blue-600 flex items-center justify-center gap-1"
+                className="px-3 py-2 bg-blue-500 text-white rounded-lg text-sm hover:bg-blue-600"
+                title="Download QR Code"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
-                Download QR
               </button>
               <button
                 onClick={(e) => {
@@ -248,6 +310,7 @@ const Tables: React.FC = () => {
                   handleDeleteTable(table.tableId);
                 }}
                 className="px-3 py-2 bg-red-500 text-white rounded-lg text-sm hover:bg-red-600"
+                title="Delete Table"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -334,7 +397,7 @@ const Tables: React.FC = () => {
                 </svg>
               </button>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
               <div>
                 <p className="text-sm text-gray-600 dark:text-neutral-400 mb-1">Status</p>
                 <p className={`font-semibold ${selectedTable.isOccupied ? 'text-red-600' : 'text-green-600'}`}>
@@ -356,6 +419,19 @@ const Tables: React.FC = () => {
                   className="text-blue-600 dark:text-blue-400 font-semibold hover:underline"
                 >
                   Download QR Code
+                </button>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600 dark:text-neutral-400 mb-1">Quick Action</p>
+                <button
+                  onClick={(e) => handleToggleOccupancy(selectedTable.tableId, e)}
+                  className={`px-4 py-2 rounded-lg font-medium ${
+                    selectedTable.isOccupied
+                      ? 'bg-green-500 text-white hover:bg-green-600'
+                      : 'bg-gray-500 text-white hover:bg-gray-600'
+                  }`}
+                >
+                  {selectedTable.isOccupied ? 'Mark as Free' : 'Mark as Occupied'}
                 </button>
               </div>
             </div>

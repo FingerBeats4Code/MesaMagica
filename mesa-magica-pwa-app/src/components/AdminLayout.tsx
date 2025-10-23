@@ -26,6 +26,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   const navItems = [
     { path: '/admin', label: 'Dashboard', icon: '📊' },
     { path: '/admin/orders', label: 'Orders', icon: '🛒' },
+    { path: '/admin/sessions', label: 'Sessions', icon: '⏱️' },
     { path: '/admin/tables', label: 'Tables', icon: '🪑' },
     ...(adminRole === 'admin' ? [{ path: '/admin/staff', label: 'Staff', icon: '👥' }] : []),
   ];

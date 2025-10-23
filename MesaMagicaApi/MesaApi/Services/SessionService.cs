@@ -102,6 +102,49 @@ public class SessionService : ISessionService
         => _db.TableSessions.Include(s => s.Table)
             .FirstOrDefaultAsync(s => s.SessionId == sessionId && s.IsActive, ct);
 
+    // MesaMagicaApi/MesaApi/Services/SessionService.cs
+    // Add this method to the SessionService class
+
+    public async Task CloseSessionAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        var session = await _db.TableSessions
+            .Include(s => s.Table)
+            .FirstOrDefaultAsync(s => s.SessionId == sessionId, ct);
+
+        if (session == null)
+        {
+            _logger.LogWarning("Attempted to close non-existent session: {SessionId}", sessionId);
+            throw new InvalidOperationException($"Session {sessionId} not found");
+        }
+
+        if (!session.IsActive)
+        {
+            _logger.LogInformation("Session {SessionId} is already closed", sessionId);
+            return;
+        }
+
+        // Close the session
+        session.IsActive = false;
+        session.EndedAt = DateTime.UtcNow;
+        session.SessionCount = 0; // Reset session count
+
+        // Free the table
+        if (session.Table != null)
+        {
+            session.Table.IsOccupied = false;
+            _db.RestaurantTables.Update(session.Table);
+        }
+
+        _db.TableSessions.Update(session);
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "Session {SessionId} closed successfully. Table {TableId} is now free.",
+            sessionId,
+            session.TableId
+        );
+    }
+
     private string GenerateJwt(Guid sessionId, Guid tableId, string tenantKey)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.Key));
