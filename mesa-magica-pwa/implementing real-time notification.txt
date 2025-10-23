@@ -1,0 +1,64 @@
+implementing real-time notifications and session management in the MesaMagica system using SignalR with Redis backplane.
+This document outlines a parameter-driven, cloud-agnostic architecture for implementing real-time notifications and session management in the MesaMagica system using SignalR with Redis backplane for multi tenant.
+Key Design Principles
+✅ Zero Code Changes between environments
+✅ Cloud Agnostic - works on Azure, AWS, GCP, on-premises
+✅ Injectable Services - fully modular and testable
+✅ Multi-Tenant Aware - isolated notification channels per tenant
+✅ Role-Based - separate channels for admin and customer notifications
+
+                 MesaMagica API                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │              │  │              │  │              │     │
+│  │ REST         │  │ SignalR      │  │ Background   │     │
+│  │ Controllers  │  │ Hubs         │  │ Services     │     │
+│  │              │  │              │  │              │     │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘     │
+│         │                 │                  │             │
+│         └─────────────────┴──────────────────┘             │
+│                           │                                │
+│                    ┌──────▼──────┐                         │
+│                    │             │                         │
+│                    │ Notification│                         │
+│                    │  Service    │                         │
+│                    │ (Injectable)│                         │
+│                    │             │                         │
+│                    └──────┬──────┘                         │
+└───────────────────────────┼────────────────────────────────┘
+                            │
+                    ┌───────▼────────┐
+                    │                │
+                    │ Redis Backplane│
+                    │   (Pub/Sub)    │
+                    │                │
+                    └────────────────┘
+1.2 Component Architecture
+src/
+├── Hubs/
+│   ├── INotificationHub.cs           # Hub interface
+│   ├── NotificationHub.cs            # SignalR hub implementation
+│   └── BaseHub.cs                    # Base hub with auth/tenant
+│
+├── Services/
+│   ├── Notifications/
+│   │   ├── INotificationService.cs   # Service interface
+│   │   ├── NotificationService.cs    # Core implementation
+│   │   ├── NotificationMessage.cs    # Message models
+│   │   └── NotificationChannel.cs    # Channel management
+│   │
+│   ├── RealTime/
+│   │   ├── IRealTimeService.cs       # Real-time operations
+│   │   └── RealTimeService.cs        # Redis Pub/Sub wrapper
+│   │
+│   └── SessionManagement/
+│       ├── ISessionNotifier.cs       # Session events
+│       └── SessionNotifier.cs        # Session notifications
+│
+├── Configuration/
+│   ├── RedisConfiguration.cs         # Redis settings
+│   ├── SignalRConfiguration.cs       # SignalR settings
+│   └── NotificationConfiguration.cs  # Notification settings
+│
+└── Extensions/
+    ├── SignalRExtensions.cs          # DI registration
+    └── RedisExtensions.cs            # Redis setup

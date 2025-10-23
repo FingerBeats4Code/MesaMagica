@@ -1,6 +1,9 @@
 ﻿// MesaMagicaApi/MesaApi/Services/SessionTimeoutService.cs
+// COMPLETE FIXED VERSION with SignalR integration
+
 using MesaApi.Common;
 using MesaApi.Models;
+using MesaApi.Services.Notifications;
 using MesaMagica.Api.Catalog;
 using MesaMagica.Api.Data;
 using Microsoft.EntityFrameworkCore;
@@ -8,15 +11,6 @@ using Microsoft.Extensions.Options;
 
 namespace MesaApi.Services
 {
-    /// <summary>
-    /// Background service that periodically checks and closes expired sessions
-    /// 
-    /// FUTURE MIGRATION - SIGNALR:
-    /// - Replace polling with SignalR + Redis backplane
-    /// - Real-time notifications to admin dashboard when session expires
-    /// - Tenant-isolated hub groups: "tenant:{tenantKey}:admins"
-    /// - Notifications: SessionExpired, OrderTimeout, etc.
-    /// </summary>
     public class SessionTimeoutService : BackgroundService
     {
         private readonly IServiceProvider _serviceProvider;
@@ -70,7 +64,6 @@ namespace MesaApi.Services
             using var scope = _serviceProvider.CreateScope();
             var catalogDb = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
 
-            // Get all active tenants
             var tenants = await catalogDb.Tenants
                 .Where(t => t.IsActive)
                 .ToListAsync(cancellationToken);
@@ -96,11 +89,9 @@ namespace MesaApi.Services
             MesaApi.Model.Catalog.Tenant tenant,
             CancellationToken cancellationToken)
         {
-            // Create tenant-specific DbContext
             var optionsBuilder = new DbContextOptionsBuilder<ApplicationDbContext>();
             optionsBuilder.UseNpgsql(tenant.ConnectionString);
 
-            // Use dummy tenant context for DbContext construction
             var tenantContext = new TenantContext(
                 tenant.TenantId,
                 tenant.Slug,
@@ -110,7 +101,9 @@ namespace MesaApi.Services
                 tenant.LicenseExpiration);
 
             using var scope = _serviceProvider.CreateScope();
-            var logger = scope.ServiceProvider.GetRequiredService<ILogger<ApplicationDbContext>>();
+
+            // FIX: Get notification service from scope
+            var notificationService = scope.ServiceProvider.GetRequiredService<INotificationService>();
 
             await using var db = new ApplicationDbContext(optionsBuilder.Options, tenantContext);
 
@@ -118,16 +111,13 @@ namespace MesaApi.Services
             var inactiveThreshold = now.AddMinutes(-_settings.InactiveSessionTimeout);
             var servedThreshold = now.AddMinutes(-_settings.ServedOrderTimeout);
 
-            // Find expired sessions
             var expiredSessions = await db.TableSessions
                 .Include(s => s.Table)
                 .Where(s => s.IsActive &&
                     (
-                        // Case 1: No orders and past inactive timeout
                         (!db.Orders.Any(o => o.SessionId == s.SessionId) &&
                          s.StartedAt < inactiveThreshold)
                         ||
-                        // Case 2: Has served orders but unpaid and past served timeout
                         (db.Orders.Any(o => o.SessionId == s.SessionId &&
                                           o.Status == OrderStatus.Served) &&
                          !db.Orders.Any(o => o.SessionId == s.SessionId &&
@@ -151,22 +141,14 @@ namespace MesaApi.Services
             {
                 try
                 {
+                    // FIX: Check if session has orders before determining reason
+                    var hasOrders = await db.Orders
+                        .AnyAsync(o => o.SessionId == session.SessionId, cancellationToken);
+
                     // Close the session
                     session.IsActive = false;
                     session.EndedAt = DateTime.UtcNow;
-
-                    // Decrement session count atomically
-                    if (session.SessionCount > 0)
-                    {
-                        await db.Database.ExecuteSqlRawAsync(
-                            @"UPDATE ""TableSessions"" 
-                              SET ""SessionCount"" = ""SessionCount"" - 1,
-                                  ""IsActive"" = false,
-                                  ""EndedAt"" = {0}
-                              WHERE ""SessionId"" = {1}",
-                            new object[] { DateTime.UtcNow, session.SessionId },
-                            cancellationToken);
-                    }
+                    session.SessionCount = 0;
 
                     // Check if no more active sessions for this table
                     var hasActiveSessions = await db.TableSessions
@@ -201,17 +183,14 @@ namespace MesaApi.Services
                         session.StartedAt,
                         tenant.Slug);
 
-                    //------------------FUTURE SIGNALR NOTIFICATION----------------------
-                    // await _hubContext.Clients
-                    //     .Group($"tenant:{tenant.TenantKey}:admins")
-                    //     .SendAsync("SessionExpired", new
-                    //     {
-                    //         SessionId = session.SessionId,
-                    //         TableNumber = session.Table?.TableNumber,
-                    //         Reason = hasOrders ? "ServedOrderTimeout" : "InactiveSessionTimeout",
-                    //         ExpiredAt = DateTime.UtcNow
-                    //     }, cancellationToken);
-                    //------------------END FUTURE SIGNALR----------------------
+                    // FIX: Send SignalR notification with correct reason
+                    var reason = hasOrders ? "ServedOrderTimeout" : "InactiveSessionTimeout";
+
+                    await notificationService.NotifySessionExpired(
+                        tenant.TenantKey,
+                        session.SessionId,
+                        session.Table?.TableNumber ?? "Unknown",
+                        reason);
                 }
                 catch (Exception ex)
                 {
