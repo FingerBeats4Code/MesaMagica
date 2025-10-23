@@ -1,5 +1,6 @@
 ﻿using MesaApi.Common;
 using MesaApi.Models;
+using MesaApi.Services.Notifications;
 using MesaMagica.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -14,11 +15,12 @@ namespace MesaApi.Services
     {
         private readonly ApplicationDbContext _dbContext;
         private readonly ILogger<OrderService> _logger;
-
-        public OrderService(ApplicationDbContext dbContext, ILogger<OrderService> logger)
+        private readonly INotificationService _notificationService; // ADD THIS
+        public OrderService(ApplicationDbContext dbContext, ILogger<OrderService> logger, INotificationService notificationService)
         {
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _notificationService = notificationService; // ADD THIS
         }
 
         public async Task<OrderResponse> CreateOrderAsync(CreateOrderRequest request, ClaimsPrincipal user, string tenantKey)
@@ -63,7 +65,34 @@ namespace MesaApi.Services
 
             _dbContext.Orders.Add(order);
             await _dbContext.SaveChangesAsync();
+            // ===== ADD SIGNALR NOTIFICATION =====
+            // Get table number for notification
+            var thissession = await _dbContext.TableSessions
+                .Include(s => s.Table)
+                .FirstOrDefaultAsync(s => s.SessionId == sessionId);
 
+            var tableNumber = thissession?.Table?.TableNumber ?? "Unknown";
+
+            // Notify admins of new order
+            await _notificationService.NotifyNewOrder(
+                tenantKey,
+                order.OrderId,
+                tableNumber,
+                new
+                {
+                    orderId = order.OrderId,
+                    tableNumber = tableNumber,
+                    totalAmount = order.TotalAmount,
+                    itemCount = order.OrderItems.Count,
+                    items = order.OrderItems.Select(oi => new
+                    {
+                        itemId = oi.ItemId,
+                        name = request.Items.First(i => i.ItemId == oi.ItemId).ItemName,
+                        quantity = oi.Quantity,
+                        price = oi.Price
+                    }).ToList()
+                });
+            // ===== END SIGNALR NOTIFICATION =====
             _logger.LogInformation("Order created. OrderId: {OrderId}, SessionId: {SessionId}, TenantKey: {TenantKey}",
                 order.OrderId, sessionId, tenantKey);
 

@@ -6,17 +6,21 @@ using MesaApi.Multitenancy;
 using MesaMagica.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
-
+using MesaApi.Services.Notifications;
 namespace MesaApi.Services
 {
+    
     public class AdminService : TenantAwareService, IAdminService
     {
+        private readonly INotificationService _notificationService;
         public AdminService(
             ApplicationDbContext dbContext,
             ITenantContext tenantContext,
-            ILogger<AdminService> logger)
+            ILogger<AdminService> logger,
+           INotificationService notificationService) // ADD THIS
             : base(dbContext, tenantContext, logger)
         {
+            _notificationService = notificationService; // ADD THIS
         }
 
         public async Task<List<ActiveOrderResponse>> GetActiveOrdersAsync(string tenantKey)
@@ -140,7 +144,40 @@ namespace MesaApi.Services
             }
 
             await _dbContext.SaveChangesAsync();
+            // ===== ADD SIGNALR NOTIFICATION =====
+            await _notificationService.NotifyOrderStatusChanged(
+                tenantKey,
+                orderId,
+                status,
+                new
+                {
+                    orderId = order.OrderId,
+                    status = order.Status,
+                    tableNumber = order.Session?.Table?.TableNumber ?? "Unknown",
+                    totalAmount = order.TotalAmount,
+                    previousStatus = previousStatus,
+                    items = order.OrderItems.Select(oi => new
+                    {
+                        name = oi.MenuItem?.Name ?? "Unknown",
+                        quantity = oi.Quantity
+                    }).ToList()
+                });
 
+            // Also notify customer
+            if (order.Session != null)
+            {
+                await _notificationService.NotifyCustomerOrderUpdate(
+                    tenantKey,
+                    order.SessionId,
+                    status,
+                    new
+                    {
+                        orderId = order.OrderId,
+                        status = order.Status,
+                        totalAmount = order.TotalAmount
+                    });
+            }
+            // ===== END SIGNALR NOTIFICATION =====
             _logger.LogInformation(
                 "Order {OrderId} status updated from {PreviousStatus} to {Status} by {User}",
                 orderId,

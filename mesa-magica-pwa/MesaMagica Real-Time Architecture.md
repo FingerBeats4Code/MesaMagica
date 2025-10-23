@@ -1,0 +1,1600 @@
+# MesaMagica Real-Time Architecture
+## SignalR + Redis Pub/Sub Implementation Guide
+
+---
+
+## Executive Summary
+
+This document outlines a **parameter-driven, cloud-agnostic architecture** for implementing real-time notifications and session management in the MesaMagica system using SignalR with Redis backplane.
+
+### Key Design Principles
+✅ **Zero Code Changes** between environments  
+✅ **Cloud Agnostic** - works on Azure, AWS, GCP, on-premises  
+✅ **Injectable Services** - fully modular and testable  
+✅ **Multi-Tenant Aware** - isolated notification channels per tenant  
+✅ **Role-Based** - separate channels for admin and customer notifications  
+
+---
+
+## 1. Architectural Approach
+
+### 1.1 Recommended Architecture: **Integrated Hub Service**
+
+**Answer to Question 2:** You should **integrate SignalR hubs into your existing MesaMagica API** rather than creating a separate service.
+
+#### Why Integrated Approach?
+
+| Aspect | Integrated Hub | Separate Service |
+|--------|---------------|------------------|
+| **Complexity** | ✅ Lower | ❌ Higher |
+| **Latency** | ✅ Minimal | ⚠️ Network hop overhead |
+| **Auth** | ✅ Reuses JWT | ❌ Needs separate auth |
+| **Deployment** | ✅ Single unit | ❌ Multiple services |
+| **Cost** | ✅ Lower | ❌ Additional infrastructure |
+| **Debugging** | ✅ Simpler | ❌ Distributed tracing needed |
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    MesaMagica API                           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │              │  │              │  │              │     │
+│  │ REST         │  │ SignalR      │  │ Background   │     │
+│  │ Controllers  │  │ Hubs         │  │ Services     │     │
+│  │              │  │              │  │              │     │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘     │
+│         │                 │                  │             │
+│         └─────────────────┴──────────────────┘             │
+│                           │                                │
+│                    ┌──────▼──────┐                         │
+│                    │             │                         │
+│                    │ Notification│                         │
+│                    │  Service    │                         │
+│                    │ (Injectable)│                         │
+│                    │             │                         │
+│                    └──────┬──────┘                         │
+└───────────────────────────┼────────────────────────────────┘
+                            │
+                    ┌───────▼────────┐
+                    │                │
+                    │ Redis Backplane│
+                    │   (Pub/Sub)    │
+                    │                │
+                    └────────────────┘
+```
+
+### 1.2 Component Architecture
+
+```
+src/
+├── Hubs/
+│   ├── INotificationHub.cs           # Hub interface
+│   ├── NotificationHub.cs            # SignalR hub implementation
+│   └── BaseHub.cs                    # Base hub with auth/tenant
+│
+├── Services/
+│   ├── Notifications/
+│   │   ├── INotificationService.cs   # Service interface
+│   │   ├── NotificationService.cs    # Core implementation
+│   │   ├── NotificationMessage.cs    # Message models
+│   │   └── NotificationChannel.cs    # Channel management
+│   │
+│   ├── RealTime/
+│   │   ├── IRealTimeService.cs       # Real-time operations
+│   │   └── RealTimeService.cs        # Redis Pub/Sub wrapper
+│   │
+│   └── SessionManagement/
+│       ├── ISessionNotifier.cs       # Session events
+│       └── SessionNotifier.cs        # Session notifications
+│
+├── Configuration/
+│   ├── RedisConfiguration.cs         # Redis settings
+│   ├── SignalRConfiguration.cs       # SignalR settings
+│   └── NotificationConfiguration.cs  # Notification settings
+│
+└── Extensions/
+    ├── SignalRExtensions.cs          # DI registration
+    └── RedisExtensions.cs            # Redis setup
+```
+
+---
+
+## 2. Cloud-Agnostic Configuration Strategy
+
+### 2.1 Configuration Abstraction Layer
+
+**Answer to Question 3:** Use a **provider-agnostic configuration pattern** with environment-specific settings files.
+
+#### appsettings.json Structure
+
+```json
+{
+  "RealTimeConfiguration": {
+    "Provider": "Redis",
+    "ConnectionString": "",
+    "ProviderSpecific": {
+      "Azure": {
+        "ServiceName": "",
+        "AccessKey": "",
+        "Port": 6380,
+        "Ssl": true
+      },
+      "AWS": {
+        "CacheClusterId": "",
+        "Region": "us-east-1",
+        "Port": 6379,
+        "Ssl": true
+      },
+      "GCP": {
+        "InstanceId": "",
+        "Region": "us-central1",
+        "Port": 6379,
+        "Ssl": false
+      },
+      "Upstash": {
+        "RestUrl": "",
+        "RestToken": "",
+        "RedisUrl": ""
+      },
+      "Local": {
+        "Host": "localhost",
+        "Port": 6379,
+        "Ssl": false
+      }
+    },
+    "SignalR": {
+      "EnableDetailedErrors": false,
+      "KeepAliveInterval": 15,
+      "ClientTimeoutInterval": 30,
+      "HandshakeTimeout": 15,
+      "MaxBufferSize": 32768,
+      "TransportMaxBufferSize": 32768,
+      "StreamBufferCapacity": 10,
+      "EnableMessagePackProtocol": true
+    },
+    "Notifications": {
+      "EnableBackgroundProcessing": true,
+      "BatchSize": 100,
+      "FlushInterval": 5,
+      "RetryAttempts": 3,
+      "RetryDelay": 1000
+    }
+  }
+}
+```
+
+### 2.2 Environment-Specific Configuration Files
+
+```bash
+# Development
+appsettings.Development.json
+
+# Staging
+appsettings.Staging.json
+
+# Production
+appsettings.Production.json
+
+# Cloud-Specific Overrides
+appsettings.Azure.json
+appsettings.AWS.json
+appsettings.GCP.json
+```
+
+### 2.3 Configuration Builder Pattern
+
+```csharp
+public static class ConfigurationBuilderExtensions
+{
+    public static IConfigurationBuilder AddCloudSpecificConfiguration(
+        this IConfigurationBuilder builder,
+        IHostEnvironment environment)
+    {
+        var cloudProvider = Environment.GetEnvironmentVariable("CLOUD_PROVIDER") 
+            ?? "Local";
+        
+        builder
+            .AddJsonFile("appsettings.json", optional: false)
+            .AddJsonFile($"appsettings.{environment.EnvironmentName}.json", optional: true)
+            .AddJsonFile($"appsettings.{cloudProvider}.json", optional: true)
+            .AddEnvironmentVariables()
+            .AddKeyVault(cloudProvider); // If using secrets management
+        
+        return builder;
+    }
+}
+```
+
+---
+
+## 3. Injectable Notification Service Design
+
+**Answer to Question 4:** Yes, build a **fully injectable notification service** with the following design:
+
+### 3.1 Service Interface
+
+```csharp
+// MesaMagicaApi/MesaApi/Services/Notifications/INotificationService.cs
+public interface INotificationService
+{
+    // Admin Notifications
+    Task NotifyOrderStatusChanged(string tenantKey, Guid orderId, string status, object orderData);
+    Task NotifyNewOrder(string tenantKey, Guid orderId, string tableNumber, object orderData);
+    Task NotifySessionExpired(string tenantKey, Guid sessionId, string tableNumber, string reason);
+    Task NotifyTableStatusChanged(string tenantKey, Guid tableId, bool isOccupied);
+    
+    // Customer Notifications
+    Task NotifyCustomerOrderUpdate(string tenantKey, Guid sessionId, string status, object orderData);
+    Task NotifyCustomerSessionExpiring(Guid sessionId, int minutesRemaining);
+    Task NotifyCustomerCartUpdated(Guid sessionId, object cartData);
+    
+    // Broadcast Notifications
+    Task BroadcastToTenant(string tenantKey, string eventType, object data);
+    Task BroadcastToRole(string tenantKey, string role, string eventType, object data);
+    
+    // Connection Management
+    Task AddToGroup(string connectionId, string groupName);
+    Task RemoveFromGroup(string connectionId, string groupName);
+    Task<bool> IsUserOnline(string userId);
+    Task<int> GetActiveConnectionsCount(string tenantKey);
+}
+```
+
+### 3.2 Service Implementation
+
+```csharp
+// MesaMagicaApi/MesaApi/Services/Notifications/NotificationService.cs
+public class NotificationService : INotificationService
+{
+    private readonly IHubContext<NotificationHub> _hubContext;
+    private readonly IRealTimeService _realTimeService;
+    private readonly ILogger<NotificationService> _logger;
+    private readonly NotificationConfiguration _config;
+
+    public NotificationService(
+        IHubContext<NotificationHub> hubContext,
+        IRealTimeService realTimeService,
+        ILogger<NotificationService> logger,
+        IOptions<NotificationConfiguration> config)
+    {
+        _hubContext = hubContext;
+        _realTimeService = realTimeService;
+        _logger = logger;
+        _config = config.Value;
+    }
+
+    public async Task NotifyOrderStatusChanged(
+        string tenantKey, 
+        Guid orderId, 
+        string status, 
+        object orderData)
+    {
+        var message = new NotificationMessage
+        {
+            Type = NotificationType.OrderStatusChanged,
+            TenantKey = tenantKey,
+            Data = new
+            {
+                orderId,
+                status,
+                order = orderData,
+                timestamp = DateTime.UtcNow
+            }
+        };
+
+        // Notify admins via SignalR
+        await _hubContext.Clients
+            .Group(NotificationChannel.AdminChannel(tenantKey))
+            .SendAsync("OrderStatusChanged", message);
+
+        // Publish to Redis for horizontal scaling
+        await _realTimeService.PublishAsync(
+            NotificationChannel.AdminChannel(tenantKey),
+            message);
+
+        _logger.LogInformation(
+            "Order status changed notification sent: {OrderId} -> {Status}",
+            orderId, status);
+    }
+
+    public async Task NotifyCustomerOrderUpdate(
+        string tenantKey,
+        Guid sessionId,
+        string status,
+        object orderData)
+    {
+        var message = new NotificationMessage
+        {
+            Type = NotificationType.CustomerOrderUpdate,
+            TenantKey = tenantKey,
+            Data = new
+            {
+                sessionId,
+                status,
+                order = orderData,
+                timestamp = DateTime.UtcNow
+            }
+        };
+
+        // Notify specific customer session
+        await _hubContext.Clients
+            .Group(NotificationChannel.SessionChannel(sessionId))
+            .SendAsync("OrderStatusUpdate", message);
+
+        await _realTimeService.PublishAsync(
+            NotificationChannel.SessionChannel(sessionId),
+            message);
+
+        _logger.LogInformation(
+            "Customer order update sent: Session {SessionId} -> {Status}",
+            sessionId, status);
+    }
+
+    // Additional implementations...
+}
+```
+
+### 3.3 Message Models
+
+```csharp
+// MesaMagicaApi/MesaApi/Services/Notifications/NotificationMessage.cs
+public class NotificationMessage
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public NotificationType Type { get; set; }
+    public string TenantKey { get; set; } = string.Empty;
+    public object Data { get; set; } = new();
+    public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+    public Dictionary<string, string> Metadata { get; set; } = new();
+}
+
+public enum NotificationType
+{
+    OrderStatusChanged,
+    NewOrder,
+    SessionExpired,
+    TableStatusChanged,
+    CustomerOrderUpdate,
+    CustomerSessionExpiring,
+    CartUpdated,
+    SystemAlert
+}
+```
+
+### 3.4 Channel Management
+
+```csharp
+// MesaMagicaApi/MesaApi/Services/Notifications/NotificationChannel.cs
+public static class NotificationChannel
+{
+    // Admin channels
+    public static string AdminChannel(string tenantKey) 
+        => $"tenant:{tenantKey}:admins";
+    
+    public static string AdminOrdersChannel(string tenantKey) 
+        => $"tenant:{tenantKey}:admins:orders";
+    
+    public static string AdminSessionsChannel(string tenantKey) 
+        => $"tenant:{tenantKey}:admins:sessions";
+    
+    // Customer channels
+    public static string SessionChannel(Guid sessionId) 
+        => $"session:{sessionId}";
+    
+    public static string CustomerChannel(string tenantKey, string userId) 
+        => $"tenant:{tenantKey}:customer:{userId}";
+    
+    // Broadcast channels
+    public static string TenantBroadcast(string tenantKey) 
+        => $"tenant:{tenantKey}:broadcast";
+    
+    public static string GlobalBroadcast() 
+        => "global:broadcast";
+}
+```
+
+---
+
+## 4. SignalR Hub Implementation
+
+### 4.1 Base Hub with Authentication
+
+```csharp
+// MesaMagicaApi/MesaApi/Hubs/BaseHub.cs
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.Authorization;
+
+[Authorize]
+public abstract class BaseHub : Hub
+{
+    protected string TenantKey => Context.User?.FindFirst("tenantKey")?.Value ?? "";
+    protected string UserId => Context.User?.FindFirst("userId")?.Value ?? "";
+    protected string Role => Context.User?.FindFirst(ClaimTypes.Role)?.Value ?? "";
+    protected Guid? SessionId 
+    {
+        get
+        {
+            var claim = Context.User?.FindFirst("sessionId")?.Value;
+            return Guid.TryParse(claim, out var id) ? id : null;
+        }
+    }
+
+    protected ILogger Logger { get; }
+
+    protected BaseHub(ILogger logger)
+    {
+        Logger = logger;
+    }
+
+    public override async Task OnConnectedAsync()
+    {
+        Logger.LogInformation(
+            "Client connected: {ConnectionId}, User: {UserId}, Tenant: {TenantKey}",
+            Context.ConnectionId, UserId, TenantKey);
+
+        await base.OnConnectedAsync();
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        Logger.LogInformation(
+            "Client disconnected: {ConnectionId}, User: {UserId}",
+            Context.ConnectionId, UserId);
+
+        await base.OnDisconnectedAsync(exception);
+    }
+}
+```
+
+### 4.2 Notification Hub
+
+```csharp
+// MesaMagicaApi/MesaApi/Hubs/NotificationHub.cs
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.Authorization;
+
+[Authorize]
+public class NotificationHub : BaseHub
+{
+    private readonly INotificationService _notificationService;
+
+    public NotificationHub(
+        INotificationService notificationService,
+        ILogger<NotificationHub> logger) : base(logger)
+    {
+        _notificationService = notificationService;
+    }
+
+    public override async Task OnConnectedAsync()
+    {
+        await base.OnConnectedAsync();
+
+        // Add to tenant group
+        await Groups.AddToGroupAsync(
+            Context.ConnectionId,
+            NotificationChannel.TenantBroadcast(TenantKey));
+
+        // Add to role-specific group
+        if (Role == "Admin" || Role == "Staff")
+        {
+            await Groups.AddToGroupAsync(
+                Context.ConnectionId,
+                NotificationChannel.AdminChannel(TenantKey));
+            
+            Logger.LogInformation(
+                "Admin {UserId} joined admin channel for tenant {TenantKey}",
+                UserId, TenantKey);
+        }
+        else if (SessionId.HasValue)
+        {
+            // Customer - join their session channel
+            await Groups.AddToGroupAsync(
+                Context.ConnectionId,
+                NotificationChannel.SessionChannel(SessionId.Value));
+            
+            Logger.LogInformation(
+                "Customer joined session channel: {SessionId}",
+                SessionId.Value);
+        }
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        // Cleanup will be automatic when connection closes
+        // Groups are automatically removed
+        
+        await base.OnDisconnectedAsync(exception);
+    }
+
+    // Client-callable methods
+    public async Task JoinOrderChannel(Guid orderId)
+    {
+        await Groups.AddToGroupAsync(
+            Context.ConnectionId,
+            $"order:{orderId}");
+        
+        Logger.LogInformation(
+            "User {UserId} joined order channel: {OrderId}",
+            UserId, orderId);
+    }
+
+    public async Task LeaveOrderChannel(Guid orderId)
+    {
+        await Groups.RemoveFromGroupAsync(
+            Context.ConnectionId,
+            $"order:{orderId}");
+    }
+
+    // Heartbeat for connection monitoring
+    public Task<bool> Ping() => Task.FromResult(true);
+}
+```
+
+---
+
+## 5. Redis Pub/Sub Integration
+
+### 5.1 Real-Time Service
+
+```csharp
+// MesaMagicaApi/MesaApi/Services/RealTime/IRealTimeService.cs
+public interface IRealTimeService
+{
+    Task PublishAsync<T>(string channel, T message);
+    Task SubscribeAsync(string channel, Action<string, string> handler);
+    Task UnsubscribeAsync(string channel);
+    Task<long> GetSubscriberCount(string channel);
+}
+
+// MesaMagicaApi/MesaApi/Services/RealTime/RealTimeService.cs
+public class RealTimeService : IRealTimeService
+{
+    private readonly IConnectionMultiplexer _redis;
+    private readonly ILogger<RealTimeService> _logger;
+    private readonly Dictionary<string, ISubscriber> _subscribers = new();
+
+    public RealTimeService(
+        IConnectionMultiplexer redis,
+        ILogger<RealTimeService> logger)
+    {
+        _redis = redis;
+        _logger = logger;
+    }
+
+    public async Task PublishAsync<T>(string channel, T message)
+    {
+        try
+        {
+            var subscriber = _redis.GetSubscriber();
+            var json = JsonSerializer.Serialize(message);
+            
+            var count = await subscriber.PublishAsync(channel, json);
+            
+            _logger.LogDebug(
+                "Published to Redis channel {Channel}: {Count} subscribers",
+                channel, count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, 
+                "Failed to publish to Redis channel {Channel}", 
+                channel);
+            throw;
+        }
+    }
+
+    public async Task SubscribeAsync(string channel, Action<string, string> handler)
+    {
+        try
+        {
+            var subscriber = _redis.GetSubscriber();
+            
+            await subscriber.SubscribeAsync(channel, (ch, message) =>
+            {
+                handler(ch, message);
+            });
+            
+            _subscribers[channel] = subscriber;
+            
+            _logger.LogInformation(
+                "Subscribed to Redis channel: {Channel}",
+                channel);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "Failed to subscribe to Redis channel {Channel}",
+                channel);
+            throw;
+        }
+    }
+
+    public async Task UnsubscribeAsync(string channel)
+    {
+        if (_subscribers.TryGetValue(channel, out var subscriber))
+        {
+            await subscriber.UnsubscribeAsync(channel);
+            _subscribers.Remove(channel);
+            
+            _logger.LogInformation(
+                "Unsubscribed from Redis channel: {Channel}",
+                channel);
+        }
+    }
+
+    public async Task<long> GetSubscriberCount(string channel)
+    {
+        var subscriber = _redis.GetSubscriber();
+        return await subscriber.PublishAsync(channel, "", CommandFlags.DemandMaster);
+    }
+}
+```
+
+---
+
+## 6. Dependency Injection & Configuration
+
+### 6.1 Service Registration
+
+```csharp
+// MesaMagicaApi/MesaApi/Extensions/SignalRExtensions.cs
+public static class SignalRExtensions
+{
+    public static IServiceCollection AddMesaMagicaSignalR(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        var config = configuration
+            .GetSection("RealTimeConfiguration")
+            .Get<RealTimeConfiguration>();
+
+        // Configure SignalR
+        var signalRBuilder = services.AddSignalR(options =>
+        {
+            options.EnableDetailedErrors = config.SignalR.EnableDetailedErrors;
+            options.KeepAliveInterval = TimeSpan.FromSeconds(config.SignalR.KeepAliveInterval);
+            options.ClientTimeoutInterval = TimeSpan.FromSeconds(config.SignalR.ClientTimeoutInterval);
+            options.HandshakeTimeout = TimeSpan.FromSeconds(config.SignalR.HandshakeTimeout);
+            options.MaximumReceiveMessageSize = config.SignalR.MaxBufferSize;
+        });
+
+        // Add Redis backplane based on provider
+        signalRBuilder.AddStackExchangeRedis(options =>
+        {
+            options.Configuration = GetRedisConfiguration(config);
+            options.Configuration.ChannelPrefix = "mesamagica";
+        });
+
+        // Add MessagePack protocol if enabled
+        if (config.SignalR.EnableMessagePackProtocol)
+        {
+            signalRBuilder.AddMessagePackProtocol();
+        }
+
+        // Register services
+        services.AddSingleton<IRealTimeService, RealTimeService>();
+        services.AddScoped<INotificationService, NotificationService>();
+        services.AddScoped<ISessionNotifier, SessionNotifier>();
+
+        // Register configuration
+        services.Configure<NotificationConfiguration>(
+            configuration.GetSection("RealTimeConfiguration:Notifications"));
+
+        return services;
+    }
+
+    private static ConfigurationOptions GetRedisConfiguration(RealTimeConfiguration config)
+    {
+        var provider = config.Provider.ToLowerInvariant();
+        var providerConfig = config.ProviderSpecific[provider];
+
+        var options = new ConfigurationOptions
+        {
+            Ssl = providerConfig.Ssl,
+            AbortOnConnectFail = false,
+            ConnectRetry = 3,
+            ConnectTimeout = 5000,
+            SyncTimeout = 5000,
+        };
+
+        // Build connection string based on provider
+        switch (provider)
+        {
+            case "azure":
+                options.EndPoints.Add(
+                    $"{providerConfig.ServiceName}.redis.cache.windows.net",
+                    providerConfig.Port);
+                options.Password = providerConfig.AccessKey;
+                break;
+
+            case "aws":
+                options.EndPoints.Add(
+                    $"{providerConfig.CacheClusterId}.cache.amazonaws.com",
+                    providerConfig.Port);
+                break;
+
+            case "gcp":
+                options.EndPoints.Add(
+                    $"{providerConfig.InstanceId}.redis.{providerConfig.Region}.gcp.cloud",
+                    providerConfig.Port);
+                break;
+
+            case "upstash":
+                options.EndPoints.Add(providerConfig.RedisUrl);
+                options.Password = providerConfig.RestToken;
+                break;
+
+            case "local":
+            default:
+                options.EndPoints.Add(
+                    providerConfig.Host,
+                    providerConfig.Port);
+                break;
+        }
+
+        return options;
+    }
+}
+```
+
+### 6.2 Program.cs Configuration
+
+```csharp
+// MesaMagicaApi/MesaApi/Program.cs - Add these lines
+
+// Add SignalR with Redis backplane
+builder.Services.AddMesaMagicaSignalR(builder.Configuration);
+
+// Configure CORS for SignalR
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("SignalRCors", policy =>
+    {
+        policy
+            .WithOrigins(allowedOrigins)
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials(); // Required for SignalR
+    });
+});
+
+// ... after app.UseAuthorization()
+
+// Map SignalR hub
+app.MapHub<NotificationHub>("/hubs/notifications");
+```
+
+---
+
+## 7. React Client Integration
+
+### 7.1 SignalR Client Setup
+
+```typescript
+// mesa-magica-pwa-app/src/services/signalr/SignalRService.ts
+import * as signalR from '@microsoft/signalr';
+
+export class SignalRService {
+  private connection: signalR.HubConnection | null = null;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
+
+  async connect(accessToken: string): Promise<void> {
+    if (this.connection?.state === signalR.HubConnectionState.Connected) {
+      return;
+    }
+
+    this.connection = new signalR.HubConnectionBuilder()
+      .withUrl(`${import.meta.env.VITE_API_BASE_URL}/hubs/notifications`, {
+        accessTokenFactory: () => accessToken,
+        transport: signalR.HttpTransportType.WebSockets | 
+                   signalR.HttpTransportType.ServerSentEvents,
+      })
+      .withAutomaticReconnect({
+        nextRetryDelayInMilliseconds: (retryContext) => {
+          if (retryContext.previousRetryCount < 5) {
+            return Math.min(1000 * Math.pow(2, retryContext.previousRetryCount), 30000);
+          }
+          return null; // Stop reconnecting
+        },
+      })
+      .configureLogging(signalR.LogLevel.Information)
+      .build();
+
+    this.setupEventHandlers();
+
+    try {
+      await this.connection.start();
+      console.log('SignalR Connected');
+      this.reconnectAttempts = 0;
+    } catch (error) {
+      console.error('SignalR Connection Error:', error);
+      this.handleReconnect();
+    }
+  }
+
+  private setupEventHandlers(): void {
+    if (!this.connection) return;
+
+    this.connection.onreconnecting((error) => {
+      console.warn('SignalR Reconnecting...', error);
+    });
+
+    this.connection.onreconnected((connectionId) => {
+      console.log('SignalR Reconnected:', connectionId);
+      this.reconnectAttempts = 0;
+    });
+
+    this.connection.onclose((error) => {
+      console.error('SignalR Connection Closed:', error);
+      this.handleReconnect();
+    });
+  }
+
+  private handleReconnect(): void {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
+      
+      setTimeout(() => {
+        const token = localStorage.getItem('jwt') || localStorage.getItem('adminToken');
+        if (token) {
+          this.connect(token);
+        }
+      }, delay);
+    }
+  }
+
+  on(eventName: string, callback: (...args: any[]) => void): void {
+    this.connection?.on(eventName, callback);
+  }
+
+  off(eventName: string, callback?: (...args: any[]) => void): void {
+    if (callback) {
+      this.connection?.off(eventName, callback);
+    } else {
+      this.connection?.off(eventName);
+    }
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.connection) {
+      await this.connection.stop();
+      this.connection = null;
+    }
+  }
+
+  async invoke(methodName: string, ...args: any[]): Promise<any> {
+    if (this.connection?.state === signalR.HubConnectionState.Connected) {
+      return await this.connection.invoke(methodName, ...args);
+    }
+    throw new Error('SignalR not connected');
+  }
+
+  get connectionState(): signalR.HubConnectionState | null {
+    return this.connection?.state ?? null;
+  }
+}
+
+export const signalRService = new SignalRService();
+```
+
+### 7.2 React Context for SignalR
+
+```typescript
+// mesa-magica-pwa-app/src/context/SignalRContext.tsx
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { signalRService } from '@/services/signalr/SignalRService';
+import { useAppContext } from '@/context/AppContext';
+
+interface SignalRContextType {
+  isConnected: boolean;
+  on: (event: string, callback: (...args: any[]) => void) => void;
+  off: (event: string, callback?: (...args: any[]) => void) => void;
+  invoke: (method: string, ...args: any[]) => Promise<any>;
+}
+
+const SignalRContext = createContext<SignalRContextType | undefined>(undefined);
+
+export const SignalRProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { jwt } = useAppContext();
+  const [isConnected, setIsConnected] = useState(false);
+
+  useEffect(() => {
+    if (jwt) {
+      signalRService.connect(jwt).then(() => {
+        setIsConnected(true);
+      });
+
+      return () => {
+        signalRService.disconnect();
+        setIsConnected(false);
+      };
+    }
+  }, [jwt]);
+
+  const contextValue: SignalRContextType = {
+    isConnected,
+    on: signalRService.on.bind(signalRService),
+    off: signalRService.off.bind(signalRService),
+    invoke: signalRService.invoke.bind(signalRService),
+  };
+
+  return (
+    <SignalRContext.Provider value={contextValue}>
+      {children}
+    </SignalRContext.Provider>
+  );
+};
+
+export const useSignalR = () => {
+  const context = useContext(SignalRContext);
+  if (!context) {
+    throw new Error('useSignalR must be used within SignalRProvider');
+  }
+  return context;
+};
+```
+
+### 7.3 Admin Dashboard Integration
+
+```typescript
+// mesa-magica-pwa-app/src/pages/admin/Orders.tsx - Add to component
+import { useSignalR } from '@/context/SignalRContext';
+import { useEffect } from 'react';
+
+const Orders: React.FC = () => {
+  const { on, off, isConnected } = useSignalR();
+  const [orders, setOrders] = useState<ActiveOrderResponse[]>([]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+
+    // Listen for order updates
+    const handleOrderStatusChanged = (notification: any) => {
+      console.log('Order status changed:', notification);
+      
+      // Update order in state
+      setOrders(prev => prev.map(order => 
+        order.orderId === notification.data.orderId
+          ? { ...order, status: notification.data.status }
+          : order
+      ));
+
+      // Show toast notification
+      toast.success(`Order ${notification.data.orderId.slice(0, 8)} is now ${notification.data.status}`);
+    };
+
+    const handleNewOrder = (notification: any) => {
+      console.log('New order received:', notification);
+      
+      // Add new order to state
+      setOrders(prev => [notification.data.order, ...prev]);
+
+      // Play notification sound
+      playNotificationSound();
+
+      // Show toast
+      toast.info(`New order from Table ${notification.data.tableNumber}`);
+    };
+
+    // Subscribe to events
+    on('OrderStatusChanged', handleOrderStatusChanged);
+    on('NewOrder', handleNewOrder);
+
+    // Cleanup
+    return () => {
+      off('OrderStatusChanged', handleOrderStatusChanged);
+      off('NewOrder', handleNewOrder);
+    };
+  }, [isConnected, on, off]);
+
+  // Rest of component...
+};
+```
+
+### 7.4 Customer Order Tracking
+
+```typescript
+// mesa-magica-pwa-app/src/components/MyOrders.tsx - Add real-time updates
+import { useSignalR } from '@/context/SignalRContext';
+
+const MyOrders: React.FC = () => {
+  const { on, off, isConnected } = useSignalR();
+  const [orders, setOrders] = useState<OrderResponse[]>([]);
+
+  useEffect(() => {
+    if (!isConnected) return;
+
+    const handleOrderUpdate = (notification: any) => {
+      console.log('Order status update:', notification);
+      
+      setOrders(prev => prev.map(order =>
+        order.orderId === notification.data.orderId
+          ? { ...order, status: notification.data.status }
+          : order
+      ));
+
+      // Show user-friendly notification
+      const statusMessages = {
+        'Preparing': '👨‍🍳 Your order is being prepared',
+        'Served': '🍽️ Your order is ready!',
+        'Closed': '✅ Order completed'
+      };
+
+      toast.info(statusMessages[notification.data.status] || 'Order updated');
+    };
+
+    on('OrderStatusUpdate', handleOrderUpdate);
+
+    return () => {
+      off('OrderStatusUpdate', handleOrderUpdate);
+    };
+  }, [isConnected, on, off]);
+
+  // Rest of component...
+};
+```
+
+---
+
+## 8. Integration with Existing Services
+
+### 8.1 Update OrderService
+
+```csharp
+// MesaMagicaApi/MesaApi/Services/OrderService.cs - Add notifications
+public class OrderService : IOrderService
+{
+    private readonly INotificationService _notificationService;
+    // ... other dependencies
+
+    public async Task<OrderResponse> CreateOrderAsync(
+        CreateOrderRequest request, 
+        ClaimsPrincipal user, 
+        string tenantKey)
+    {
+        // Existing order creation logic...
+        
+        // NEW: Send real-time notification
+        await _notificationService.NotifyNewOrder(
+            tenantKey,
+            order.OrderId,
+            tableNumber,
+            new
+            {
+                orderId = order.OrderId,
+                tableNumber,
+                items = order.OrderItems,
+                totalAmount = order.TotalAmount,
+                createdAt = order.CreatedAt
+            });
+
+        return orderResponse;
+    }
+}
+```
+
+### 8.2 Update AdminService
+
+```csharp
+// MesaMagicaApi/MesaApi/Services/AdminService.cs - Add notifications
+public async Task UpdateOrderStatusAsync(
+    Guid orderId, 
+    string status, 
+    ClaimsPrincipal user, 
+    string tenantKey)
+{
+    // Existing status update logic...
+    
+    // NEW: Notify admins
+    await _notificationService.NotifyOrderStatusChanged(
+        tenantKey,
+        orderId,
+        status,
+        orderData);
+
+    // NEW: Notify customer
+    await _notificationService.NotifyCustomerOrderUpdate(
+        tenantKey,
+        order.SessionId,
+        status,
+        orderData);
+}
+```
+
+### 8.3 Update SessionTimeoutService
+
+```csharp
+// MesaMagicaApi/MesaApi/Services/SessionTimeoutService.cs - Add notifications
+public class SessionTimeoutService : BackgroundService
+{
+    private readonly INotificationService _notificationService;
+    // ... other dependencies
+
+    private async Task CleanupTenantSessionsAsync(
+        Tenant tenant,
+        CancellationToken cancellationToken)
+    {
+        // Existing cleanup logic...
+
+        foreach (var session in expiredSessions)
+        {
+            // Close session...
+
+            // NEW: Send real-time notification
+            await _notificationService.NotifySessionExpired(
+                tenant.TenantKey,
+                session.SessionId,
+                session.Table?.TableNumber ?? "Unknown",
+                hasOrders ? "ServedOrderTimeout" : "InactiveSessionTimeout");
+        }
+    }
+}
+```
+
+---
+
+## 9. Deployment Configuration Examples
+
+### 9.1 Azure Deployment
+
+```json
+// appsettings.Azure.json
+{
+  "RealTimeConfiguration": {
+    "Provider": "Azure",
+    "ProviderSpecific": {
+      "Azure": {
+        "ServiceName": "#{AZURE_REDIS_NAME}#",
+        "AccessKey": "#{AZURE_REDIS_KEY}#",
+        "Port": 6380,
+        "Ssl": true
+      }
+    }
+  },
+  "ConnectionStrings": {
+    "CatalogConnection": "#{AZURE_SQL_CATALOG}#",
+    "TenantConnection": "#{AZURE_SQL_TENANT}#"
+  }
+}
+```
+
+```yaml
+# Azure DevOps Pipeline
+- task: AzureRmWebAppDeployment@4
+  inputs:
+    azureSubscription: 'Production'
+    appType: 'webApp'
+    WebAppName: 'mesamagica-api'
+    package: '$(Pipeline.Workspace)/drop/*.zip'
+    deploymentMethod: 'auto'
+    AppSettings: |
+      -CLOUD_PROVIDER "Azure"
+      -AZURE_REDIS_NAME "$(AzureRedisName)"
+      -AZURE_REDIS_KEY "$(AzureRedisKey)"
+      -ASPNETCORE_ENVIRONMENT "Production"
+```
+
+### 9.2 AWS Deployment
+
+```json
+// appsettings.AWS.json
+{
+  "RealTimeConfiguration": {
+    "Provider": "AWS",
+    "ProviderSpecific": {
+      "AWS": {
+        "CacheClusterId": "#{AWS_ELASTICACHE_CLUSTER}#",
+        "Region": "#{AWS_REGION}#",
+        "Port": 6379,
+        "Ssl": true
+      }
+    }
+  }
+}
+```
+
+```yaml
+# AWS CodeDeploy appspec.yml
+version: 0.0
+os: linux
+files:
+  - source: /
+    destination: /var/www/mesamagica
+hooks:
+  ApplicationStart:
+    - location: scripts/start-app.sh
+      timeout: 300
+      runas: root
+  
+environment_variables:
+  CLOUD_PROVIDER: "AWS"
+  AWS_REGION: "us-east-1"
+  ASPNETCORE_ENVIRONMENT: "Production"
+```
+
+### 9.3 Docker Compose (Local/Development)
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  api:
+    build: ./MesaMagicaApi
+    ports:
+      - "5000:80"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - CLOUD_PROVIDER=Local
+      - RealTimeConfiguration__Provider=Local
+      - RealTimeConfiguration__ProviderSpecific__Local__Host=redis
+      - RealTimeConfiguration__ProviderSpecific__Local__Port=6379
+    depends_on:
+      - redis
+      - postgres
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=mesamagica
+      - POSTGRES_PASSWORD=dev_password
+      - POSTGRES_DB=catalog
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+volumes:
+  redis-data:
+  postgres-data:
+```
+
+---
+
+## 10. Testing Strategy
+
+### 10.1 Unit Tests
+
+```csharp
+// MesaMagicaApi.Tests/Services/NotificationServiceTests.cs
+public class NotificationServiceTests
+{
+    private readonly Mock<IHubContext<NotificationHub>> _hubContextMock;
+    private readonly Mock<IRealTimeService> _realTimeServiceMock;
+    private readonly NotificationService _sut;
+
+    [Fact]
+    public async Task NotifyOrderStatusChanged_SendsToAdminChannel()
+    {
+        // Arrange
+        var tenantKey = "test-tenant";
+        var orderId = Guid.NewGuid();
+        var status = "Preparing";
+
+        // Act
+        await _sut.NotifyOrderStatusChanged(tenantKey, orderId, status, new {});
+
+        // Assert
+        _hubContextMock.Verify(
+            x => x.Clients.Group(It.Is<string>(g => g.Contains("admins")))
+                .SendCoreAsync(
+                    "OrderStatusChanged",
+                    It.IsAny<object[]>(),
+                    default),
+            Times.Once);
+    }
+}
+```
+
+### 10.2 Integration Tests
+
+```csharp
+// MesaMagicaApi.IntegrationTests/SignalR/NotificationHubTests.cs
+public class NotificationHubTests : IClassFixture<WebApplicationFactory<Program>>
+{
+    [Fact]
+    public async Task Hub_AuthenticatedUser_CanConnect()
+    {
+        // Arrange
+        var connection = new HubConnectionBuilder()
+            .WithUrl("http://localhost/hubs/notifications", options =>
+            {
+                options.AccessTokenProvider = () => Task.FromResult(_validToken);
+            })
+            .Build();
+
+        // Act
+        await connection.StartAsync();
+
+        // Assert
+        Assert.Equal(HubConnectionState.Connected, connection.State);
+
+        // Cleanup
+        await connection.StopAsync();
+    }
+}
+```
+
+---
+
+## 11. Monitoring & Observability
+
+### 11.1 Health Checks
+
+```csharp
+// MesaMagicaApi/MesaApi/HealthChecks/SignalRHealthCheck.cs
+public class SignalRHealthCheck : IHealthCheck
+{
+    private readonly IConnectionMultiplexer _redis;
+
+    public async Task<HealthCheckResult> CheckHealthAsync(
+        HealthCheckContext context,
+        CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var database = _redis.GetDatabase();
+            await database.PingAsync();
+
+            return HealthCheckResult.Healthy("SignalR Redis backplane is healthy");
+        }
+        catch (Exception ex)
+        {
+            return HealthCheckResult.Unhealthy(
+                "SignalR Redis backplane is unhealthy",
+                ex);
+        }
+    }
+}
+
+// Register in Program.cs
+builder.Services.AddHealthChecks()
+    .AddCheck<SignalRHealthCheck>("signalr-redis");
+
+app.MapHealthChecks("/health/signalr");
+```
+
+### 11.2 Logging & Metrics
+
+```csharp
+// Add to NotificationService
+public async Task NotifyOrderStatusChanged(/*...*/)
+{
+    var stopwatch = Stopwatch.StartNew();
+
+    try
+    {
+        // Send notification...
+        
+        stopwatch.Stop();
+        _logger.LogInformation(
+            "Notification sent successfully in {ElapsedMs}ms: {Type}",
+            stopwatch.ElapsedMilliseconds,
+            NotificationType.OrderStatusChanged);
+    }
+    catch (Exception ex)
+    {
+        stopwatch.Stop();
+        _logger.LogError(ex,
+            "Failed to send notification after {ElapsedMs}ms: {Type}",
+            stopwatch.ElapsedMilliseconds,
+            NotificationType.OrderStatusChanged);
+        throw;
+    }
+}
+```
+
+---
+
+## 12. Performance Optimization
+
+### 12.1 Message Batching
+
+```csharp
+public class BatchedNotificationService : INotificationService
+{
+    private readonly Channel<NotificationMessage> _messageQueue;
+    private readonly Timer _flushTimer;
+
+    public BatchedNotificationService()
+    {
+        _messageQueue = Channel.CreateUnbounded<NotificationMessage>();
+        _flushTimer = new Timer(FlushMessages, null, 
+            TimeSpan.FromSeconds(5), 
+            TimeSpan.FromSeconds(5));
+    }
+
+    private async void FlushMessages(object? state)
+    {
+        var messages = new List<NotificationMessage>();
+        
+        while (_messageQueue.Reader.TryRead(out var message))
+        {
+            messages.Add(message);
+            
+            if (messages.Count >= 100)
+                break;
+        }
+
+        if (messages.Any())
+        {
+            await SendBatchAsync(messages);
+        }
+    }
+}
+```
+
+### 12.2 Connection Pooling
+
+```csharp
+// Configure in SignalRExtensions.cs
+signalRBuilder.AddStackExchangeRedis(options =>
+{
+    options.Configuration = new ConfigurationOptions
+    {
+        // Connection pool settings
+        KeepAlive = 60,
+        ConnectTimeout = 5000,
+        SyncTimeout = 5000,
+        AsyncTimeout = 5000,
+        AbortOnConnectFail = false,
+        ConnectRetry = 3,
+        ReconnectRetryPolicy = new ExponentialRetry(1000, 30000),
+    };
+});
+```
+
+---
+
+## 13. Security Considerations
+
+### 13.1 Authorization Policies
+
+```csharp
+// Add to Program.cs
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("AdminOnly", policy =>
+        policy.RequireRole("Admin", "Staff"));
+    
+    options.AddPolicy("CustomerOnly", policy =>
+        policy.RequireClaim("sessionId"));
+});
+
+// Apply to hub methods
+[Authorize(Policy = "AdminOnly")]
+public class NotificationHub : BaseHub
+{
+    [Authorize(Policy = "CustomerOnly")]
+    public async Task JoinOrderChannel(Guid orderId)
+    {
+        // Customer-specific logic
+    }
+}
+```
+
+### 13.2 Rate Limiting
+
+```csharp
+// Add rate limiting for SignalR connections
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddFixedWindowLimiter("signalr", options =>
+    {
+        options.Window = TimeSpan.FromMinutes(1);
+        options.PermitLimit = 100;
+        options.QueueLimit = 10;
+    });
+});
+
+// Apply to hub
+[EnableRateLimiting("signalr")]
+public class NotificationHub : BaseHub
+{
+    // ...
+}
+```
+
+---
+
+## 14. Migration Roadmap
+
+### Phase 1: Foundation (Week 1-2)
+- ✅ Install SignalR packages
+- ✅ Configure Redis backplane
+- ✅ Create base hub and notification service
+- ✅ Set up dependency injection
+- ✅ Add configuration abstraction
+
+### Phase 2: Backend Integration (Week 3-4)
+- ✅ Implement notification service
+- ✅ Integrate with OrderService
+- ✅ Integrate with AdminService
+- ✅ Integrate with SessionTimeoutService
+- ✅ Add health checks
+
+### Phase 3: Frontend Integration (Week 5-6)
+- ✅ Install SignalR client
+- ✅ Create SignalR context
+- ✅ Update admin dashboard
+- ✅ Update customer order tracking
+- ✅ Add connection status indicators
+
+### Phase 4: Testing & Optimization (Week 7-8)
+- ✅ Write unit tests
+- ✅ Write integration tests
+- ✅ Performance testing
+- ✅ Load testing
+- ✅ Security audit
+
+### Phase 5: Deployment (Week 9-10)
+- ✅ Configure cloud environments
+- ✅ Deploy to staging
+- ✅ User acceptance testing
+- ✅ Production deployment
+- ✅ Monitoring setup
+
+---
+
+## 15. Cost Optimization
+
+### 15.1 Redis Cost Comparison
+
+| Provider | Tier | Price/Month | Connections | Memory |
+|----------|------|-------------|-------------|--------|
+| Azure Cache | Basic C1 | $45 | 256 | 1GB |
+| AWS ElastiCache | cache.t3.micro | $12 | 65k | 0.5GB |
+| GCP Memorystore | Basic M1 | $36 | 65k | 1GB |
+| Upstash | Free | $0 | 10k | 256MB |
+| Upstash | Pro | $80 | 1M | 10GB |
+
+### 15.2 Scaling Strategy
+
+```
+Development: Local Redis (Free)
+    ↓
+Staging: Upstash Free Tier ($0)
+    ↓
+Production (Small): AWS ElastiCache t3.micro ($12/mo)
+    ↓
+Production (Medium): Azure Cache Basic C1 ($45/mo)
+    ↓
+Production (Large): AWS ElastiCache r6g.large ($180/mo)
+```
+
+---
+
+## Summary
+
+### ✅ Answers to Your Questions
+
+1. **Architecture**: Integrated SignalR hub within MesaMagica API with Redis backplane
+2. **Separate Service**: NO - integrate into existing API for simplicity and performance
+3. **Cloud Migration**: Configuration-driven approach with zero code changes
+4. **Injectable Service**: YES - fully modular notification service with DI
+
+### 🎯 Key Benefits
+
+- **Scalability**: Redis Pub/Sub enables horizontal scaling across multiple API instances
+- **Flexibility**: Works with any cloud provider through configuration
+- **Maintainability**: Clean separation of concerns with injectable services
+- **Performance**: WebSockets for real-time, low-latency notifications
+- **Cost-Effective**: Start small (local/free tier) and scale as needed
+
+### 📚 Next Steps
+
+1. Review this architecture document
+2. Start with Phase 1 (Foundation)
+3. Implement incrementally
+4. Test thoroughly in each phase
+5. Deploy to production
+
+Need help with implementation? Let me know which section you'd like to start with!
