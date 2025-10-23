@@ -87,7 +87,7 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
   const [hasActiveOrder, setHasActiveOrder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
+const [orderRefreshTrigger, setOrderRefreshTrigger] = useState(0);
   const { jwt, sessionId, tenantSlug } = useAppContext();
 
   useEffect(() => {
@@ -230,41 +230,73 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
   };
   //-----------------END CHANGE----------------------
 
-  const handlePlaceOrder = async () => {
-    if (!sessionId) {
-      alert('Session not initialized. Please try again.');
-      return;
-    }
+ // Replace the handlePlaceOrder function in MainContent.tsx (around line 268)
 
-    if (hasActiveOrder) {
-      alert('You already have an active order. Please wait for it to be completed before placing a new order.');
-      return;
-    }
+// Update the handlePlaceOrder function (replace the one we fixed earlier)
+const handlePlaceOrder = async () => {
+  if (!sessionId) {
+    alert('Session not initialized. Please try again.');
+    return;
+  }
 
-    //-----------------CHANGE: Added session error handling for order submission-----------------2025-01-22----------------------
+  if (hasActiveOrder) {
+    alert('You already have an active order. Please wait for it to be completed before placing a new order.');
+    return;
+  }
+
+  try {
+    console.log(`[${new Date().toISOString()}] Submitting order for session ${sessionId}`);
+    
+    // Submit the order
+    const orderResponse = await submitOrder(sessionId, { tableId });
+    
+    console.log(`[${new Date().toISOString()}] ✅ Order submitted successfully: ${orderResponse.orderId}`);
+    
+    // Show success message
+    alert(`Order submitted successfully! Order ID: ${orderResponse.orderId}`);
+    
+    // Mark that we have an active order
+    setHasActiveOrder(true);
+    
+    // Close the cart modal
+    onCloseCart();
+    
+    // Trigger order refresh by incrementing counter
+    setOrderRefreshTrigger(prev => prev + 1);
+    
+    // Try to refresh cart and orders, but don't fail if session is closed
     try {
-      const orderResponse = await submitOrder(sessionId, { tableId });
-      alert(`Order submitted successfully! Order ID: ${orderResponse.orderId}`);
-      setHasActiveOrder(true);
-      onCartUpdate();
-      onCloseCart();
+      // Refresh cart (this will clear it after order submission)
+      await onCartUpdate();
       
       // Refresh orders list
       const orders = await getMyOrders();
       setMyOrders(orders);
-    } catch (error: any) {
-      console.error('Error submitting order:', error);
       
-      // Check if error is session-related
-      if (error?.response?.status === 400 || error?.response?.status === 401) {
-        alert('Your session has expired. The page will reload to create a new session.');
-        window.location.reload();
-      } else {
-        alert('Error submitting order. Please try again.');
+      console.log(`[${new Date().toISOString()}] ✅ Cart and orders refreshed`);
+    } catch (refreshError: any) {
+      console.log(`[${new Date().toISOString()}] ℹ️ Could not refresh cart/orders (session may be processing):`, refreshError?.response?.status);
+      
+      // If we get a session-related error after successful order, it's okay
+      // The order was already submitted successfully
+      // We'll refresh on next user interaction
+      if (refreshError?.response?.status === 400 || refreshError?.response?.status === 401) {
+        console.log(`[${new Date().toISOString()}] ℹ️ Session state changed after order - this is normal`);
       }
     }
-    //-----------------END CHANGE----------------------
-  };
+    
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error submitting order:`, error);
+    
+    // Check if error is session-related
+    if (error?.response?.status === 400 || error?.response?.status === 401) {
+      alert('Your session has expired. The page will reload to create a new session.');
+      window.location.reload();
+    } else {
+      alert('Error submitting order. Please try again.');
+    }
+  }
+};
 
   if (!jwt || !sessionId) {
     return (
@@ -487,7 +519,7 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
             </div>
             
             <div className="flex-1 overflow-y-auto p-6">
-              <MyOrders />
+              {/* <MyOrders refreshTrigger={orderRefreshTrigger} /> */}
             </div>
           </div>
         </div>
