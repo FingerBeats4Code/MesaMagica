@@ -179,7 +179,6 @@ namespace MesaMagicaApi.Services
             await InvalidateCacheAsync(sessionId);
         }
 
-        // Replace existing SubmitOrderAsync method
         public async Task<OrderResponse> SubmitOrderAsync(Guid sessionId, string tableId, string tenantKey, ClaimsPrincipal user)
         {
             using var transaction = await _context.Database.BeginTransactionAsync();
@@ -198,8 +197,9 @@ namespace MesaMagicaApi.Services
                 if (!cartItems.Any())
                     throw new InvalidOperationException("Cannot submit an empty cart.");
 
-                // Check if there's an existing active order (not Closed)
+                // Check if there's an existing active order (not Closed) - use AsNoTracking
                 var existingOrder = await _context.Orders
+                    .AsNoTracking()
                     .Include(o => o.OrderItems)
                     .FirstOrDefaultAsync(o => o.SessionId == sessionId && o.Status != OrderStatus.Closed);
 
@@ -211,45 +211,79 @@ namespace MesaMagicaApi.Services
                     _logger.LogInformation("Updating existing order {OrderId} for session {SessionId}",
                         existingOrder.OrderId, sessionId);
 
+                    // Clear any existing tracked entities for this order
+                    var trackedOrders = _context.ChangeTracker.Entries<Order>()
+                        .Where(e => e.Entity.OrderId == existingOrder.OrderId)
+                        .ToList();
+
+                    foreach (var entry in trackedOrders)
+                    {
+                        entry.State = EntityState.Detached;
+                    }
+
+                    var trackedItems = _context.ChangeTracker.Entries<OrderItem>()
+                        .Where(e => e.Entity.OrderId == existingOrder.OrderId)
+                        .ToList();
+
+                    foreach (var entry in trackedItems)
+                    {
+                        entry.State = EntityState.Detached;
+                    }
+
+                    // Now fetch fresh with tracking enabled
+                    var freshOrder = await _context.Orders
+                        .Include(o => o.OrderItems)
+                        .FirstOrDefaultAsync(o => o.OrderId == existingOrder.OrderId);
+
+                    if (freshOrder == null || freshOrder.Status == OrderStatus.Closed)
+                    {
+                        throw new InvalidOperationException("Order was closed or removed.");
+                    }
+
                     foreach (var cartItem in cartItems)
                     {
-                        var existingItem = existingOrder.OrderItems
+                        var existingItem = freshOrder.OrderItems
                             .FirstOrDefault(oi => oi.ItemId == cartItem.ItemId);
 
                         if (existingItem != null)
                         {
                             // Increase quantity of existing item
                             existingItem.Quantity += cartItem.Quantity;
+                            _context.Entry(existingItem).State = EntityState.Modified;
                         }
                         else
                         {
                             // Add new item to order
-                            existingOrder.OrderItems.Add(new OrderItem
+                            var newItem = new OrderItem
                             {
                                 OrderItemId = Guid.NewGuid(),
-                                OrderId = existingOrder.OrderId,
+                                OrderId = freshOrder.OrderId,
                                 ItemId = cartItem.ItemId,
                                 Quantity = cartItem.Quantity,
                                 Price = cartItem.MenuItem!.Price
-                            });
+                            };
+
+                            freshOrder.OrderItems.Add(newItem);
+                            _context.OrderItems.Add(newItem);
                         }
                     }
 
                     // Recalculate total
-                    existingOrder.TotalAmount = existingOrder.OrderItems.Sum(oi => oi.Price * oi.Quantity);
-                    existingOrder.UpdatedAt = DateTime.UtcNow;
+                    freshOrder.TotalAmount = freshOrder.OrderItems.Sum(oi => oi.Price * oi.Quantity);
+                    freshOrder.UpdatedAt = DateTime.UtcNow;
+                    _context.Entry(freshOrder).State = EntityState.Modified;
 
                     await _context.SaveChangesAsync();
 
                     orderResponse = new OrderResponse
                     {
-                        OrderId = existingOrder.OrderId,
-                        SessionId = existingOrder.SessionId,
-                        Status = existingOrder.Status,
-                        TotalAmount = existingOrder.TotalAmount,
-                        CreatedAt = existingOrder.CreatedAt,
-                        UpdatedAt = existingOrder.UpdatedAt,
-                        Items = existingOrder.OrderItems.Select(oi => new OrderItemResponse
+                        OrderId = freshOrder.OrderId,
+                        SessionId = freshOrder.SessionId,
+                        Status = freshOrder.Status,
+                        TotalAmount = freshOrder.TotalAmount,
+                        CreatedAt = freshOrder.CreatedAt,
+                        UpdatedAt = freshOrder.UpdatedAt,
+                        Items = freshOrder.OrderItems.Select(oi => new OrderItemResponse
                         {
                             OrderItemId = oi.OrderItemId,
                             ItemId = oi.ItemId,
@@ -295,7 +329,6 @@ namespace MesaMagicaApi.Services
                 throw;
             }
         }
-
         public async Task ClearCartAsync(Guid sessionId)
         {
             var cartItems = await _context.CartItems
