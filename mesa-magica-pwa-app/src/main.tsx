@@ -1,4 +1,5 @@
 // mesa-magica-pwa-app/src/main.tsx
+// UPDATED: Added AdminSignalRProvider for admin real-time updates
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, useRoutes, Navigate, useLocation } from "react-router-dom";
 import { AppProvider, useAppContext } from "@/context/AppContext";
@@ -12,6 +13,7 @@ import AdminLayout from "@/components/AdminLayout";
 import { useState, useEffect } from "react";
 import { getCart, CartItem } from "@/api/api";
 import { SignalRProvider } from "@/context/SignalRContext";
+import { AdminSignalRProvider } from "@/context/AdminSignalRContext"; // ✅ NEW IMPORT
 import "./index.css";
 
 // Admin pages
@@ -23,6 +25,7 @@ import EditCart from "./pages/admin/EditCart";
 import SessionManagement from "./pages/admin/SessionManagement";
 
 // Protected Route wrapper for admin pages
+// ✅ UPDATED: Wrap with AdminSignalRProvider for real-time updates
 const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boolean }> = ({ 
   children, 
   requireAdmin = false 
@@ -40,7 +43,12 @@ const ProtectedRoute: React.FC<{ children: React.ReactNode; requireAdmin?: boole
     return <Navigate to="/admin" replace />;
   }
 
-  return <AdminLayout>{children}</AdminLayout>;
+  // ✅ CRITICAL: Wrap admin content with AdminSignalRProvider
+  return (
+    <AdminSignalRProvider>
+      <AdminLayout>{children}</AdminLayout>
+    </AdminSignalRProvider>
+  );
 };
 
 // Customer View Component
@@ -162,19 +170,20 @@ function App() {
 const rootElement = document.getElementById("root");
 if (rootElement) {
   createRoot(rootElement).render(
-<BrowserRouter>
-  <GlobalProvider>
-    <AppProvider>
-      <SignalRProvider>
-        <SessionTimeoutProvider>
-          <SessionInitializer>
-            <App />
-          </SessionInitializer>
-        </SessionTimeoutProvider>
-      </SignalRProvider>
-    </AppProvider>
-  </GlobalProvider>
-</BrowserRouter>
+    <BrowserRouter>
+      <GlobalProvider>
+        <AppProvider>
+          {/* Customer SignalR provider wraps customer routes */}
+          <SignalRProvider>
+            <SessionTimeoutProvider>
+              <SessionInitializer>
+                <App />
+              </SessionInitializer>
+            </SessionTimeoutProvider>
+          </SignalRProvider>
+        </AppProvider>
+      </GlobalProvider>
+    </BrowserRouter>
   );
 } else {
   console.error("Root element not found");
