@@ -822,10 +822,11 @@ export const toggleStaffActive = async (userId: string): Promise<Staff> => {
 export const getMyOrders = async (): Promise<OrderResponse[]> => {
   try {
     console.log(`[${new Date().toISOString()}] 📋 Fetching my orders`);
-    const response = await api.get('/orders/my-orders');
+    const response = await api.get('/api/orders/my-orders'); // FIXED: Added /api prefix
+    console.log(`[${new Date().toISOString()}] ✅ Retrieved ${response.data.length} orders`);
     return response.data;
   } catch (error: any) {
-    console.error(`[${new Date().toISOString()}] ❌ Error fetching my orders:`, error);
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching my orders:`, error?.response?.status, error?.response?.data);
     throw error;
   }
 };
