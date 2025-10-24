@@ -2,9 +2,8 @@
 import React, { useState, useEffect } from "react";
 import { useAppContext } from "@/context/AppContext";
 import Menu from "@/components/Menu";
-import MyOrders from '@/components/MyOrders';
 import { useSearchParams } from 'react-router-dom';
-import { getCategories, getMenuItems, submitOrder, addToCartBackend, removeFromCartBackend, getCart, getMyOrders, Category, MenuItemResponse, CartItem, OrderResponse } from "@/api/api";
+import { getCategories, getMenuItems, submitOrder, addToCartBackend, removeFromCartBackend, getCart, getMyOrders, editOrder, Category, MenuItemResponse, CartItem, OrderResponse } from "@/api/api";
 
 interface FoodCardProps {
   name: string;
@@ -87,7 +86,9 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
   const [hasActiveOrder, setHasActiveOrder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-const [orderRefreshTrigger, setOrderRefreshTrigger] = useState(0);
+  const [orderRefreshTrigger, setOrderRefreshTrigger] = useState(0);
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [editingOrderItems, setEditingOrderItems] = useState<Array<{itemId: string; itemName: string; quantity: number; price: number}>>([]);
   const { jwt, sessionId, tenantSlug } = useAppContext();
 
   useEffect(() => {
@@ -150,9 +151,6 @@ const [orderRefreshTrigger, setOrderRefreshTrigger] = useState(0);
     setSelectedCategory(categoryId);
   };
 
-  //-----------------CHANGE: Enhanced error handling for session expiration-----------------2025-01-22----------------------
-  // Added detection of 400/401 errors which indicate session is closed/invalid
-  // Automatically reloads page to create new session via SessionInitializer
   const handleAddToCart = async (item: MenuItemResponse) => {
     if (!sessionId) {
       alert('Session not initialized. Please try again.');
@@ -170,7 +168,6 @@ const [orderRefreshTrigger, setOrderRefreshTrigger] = useState(0);
     } catch (error: any) {
       console.error('Error adding to cart:', error);
       
-      // Check if error is session-related (admin closed session)
       if (error?.response?.status === 400 || error?.response?.status === 401) {
         alert('Your session has expired. The page will reload to create a new session.');
         window.location.reload();
@@ -197,7 +194,6 @@ const [orderRefreshTrigger, setOrderRefreshTrigger] = useState(0);
     } catch (error: any) {
       console.error('Error updating cart:', error);
       
-      // Check if error is session-related
       if (error?.response?.status === 400 || error?.response?.status === 401) {
         alert('Your session has expired. The page will reload to create a new session.');
         window.location.reload();
@@ -219,7 +215,6 @@ const [orderRefreshTrigger, setOrderRefreshTrigger] = useState(0);
     } catch (error: any) {
       console.error('Error updating cart:', error);
       
-      // Check if error is session-related
       if (error?.response?.status === 400 || error?.response?.status === 401) {
         alert('Your session has expired. The page will reload to create a new session.');
         window.location.reload();
@@ -228,75 +223,106 @@ const [orderRefreshTrigger, setOrderRefreshTrigger] = useState(0);
       }
     }
   };
-  //-----------------END CHANGE----------------------
 
- // Replace the handlePlaceOrder function in MainContent.tsx (around line 268)
+  const handlePlaceOrder = async () => {
+    if (!sessionId) {
+      alert('Session not initialized. Please try again.');
+      return;
+    }
 
-// Update the handlePlaceOrder function (replace the one we fixed earlier)
-const handlePlaceOrder = async () => {
-  if (!sessionId) {
-    alert('Session not initialized. Please try again.');
-    return;
-  }
+    if (hasActiveOrder) {
+      alert('You already have an active order. Please wait for it to be completed before placing a new order.');
+      return;
+    }
 
-  if (hasActiveOrder) {
-    alert('You already have an active order. Please wait for it to be completed before placing a new order.');
-    return;
-  }
-
-  try {
-    console.log(`[${new Date().toISOString()}] Submitting order for session ${sessionId}`);
-    
-    // Submit the order
-    const orderResponse = await submitOrder(sessionId, { tableId });
-    
-    console.log(`[${new Date().toISOString()}] ✅ Order submitted successfully: ${orderResponse.orderId}`);
-    
-    // Show success message
-    alert(`Order submitted successfully! Order ID: ${orderResponse.orderId}`);
-    
-    // Mark that we have an active order
-    setHasActiveOrder(true);
-    
-    // Close the cart modal
-    onCloseCart();
-    
-    // Trigger order refresh by incrementing counter
-    setOrderRefreshTrigger(prev => prev + 1);
-    
-    // Try to refresh cart and orders, but don't fail if session is closed
     try {
-      // Refresh cart (this will clear it after order submission)
-      await onCartUpdate();
+      console.log(`[${new Date().toISOString()}] Submitting order for session ${sessionId}`);
+      const orderResponse = await submitOrder(sessionId, { tableId });
+      console.log(`[${new Date().toISOString()}] ✅ Order submitted successfully: ${orderResponse.orderId}`);
       
-      // Refresh orders list
-      const orders = await getMyOrders();
-      setMyOrders(orders);
+      alert(`Order submitted successfully! Order ID: ${orderResponse.orderId}`);
+      setHasActiveOrder(true);
+      onCloseCart();
+      setOrderRefreshTrigger(prev => prev + 1);
       
-      console.log(`[${new Date().toISOString()}] ✅ Cart and orders refreshed`);
-    } catch (refreshError: any) {
-      console.log(`[${new Date().toISOString()}] ℹ️ Could not refresh cart/orders (session may be processing):`, refreshError?.response?.status);
-      
-      // If we get a session-related error after successful order, it's okay
-      // The order was already submitted successfully
-      // We'll refresh on next user interaction
-      if (refreshError?.response?.status === 400 || refreshError?.response?.status === 401) {
-        console.log(`[${new Date().toISOString()}] ℹ️ Session state changed after order - this is normal`);
+      try {
+        await onCartUpdate();
+        const orders = await getMyOrders();
+        setMyOrders(orders);
+        console.log(`[${new Date().toISOString()}] ✅ Cart and orders refreshed`);
+      } catch (refreshError: any) {
+        console.log(`[${new Date().toISOString()}] ℹ️ Could not refresh cart/orders (session may be processing):`, refreshError?.response?.status);
+      }
+    } catch (error: any) {
+      console.error(`[${new Date().toISOString()}] ❌ Error submitting order:`, error);
+      if (error?.response?.status === 400 || error?.response?.status === 401) {
+        alert('Your session has expired. The page will reload to create a new session.');
+        window.location.reload();
+      } else {
+        alert('Error submitting order. Please try again.');
       }
     }
-    
-  } catch (error: any) {
-    console.error(`[${new Date().toISOString()}] ❌ Error submitting order:`, error);
-    
-    // Check if error is session-related
-    if (error?.response?.status === 400 || error?.response?.status === 401) {
-      alert('Your session has expired. The page will reload to create a new session.');
-      window.location.reload();
-    } else {
-      alert('Error submitting order. Please try again.');
+  };
+
+  const handleStartEditOrder = (order: OrderResponse) => {
+    if (order.status.toLowerCase() !== 'pending') {
+      alert('Only pending orders can be edited');
+      return;
     }
-  }
-};
+    setEditingOrderId(order.orderId);
+    setEditingOrderItems(order.items.map(item => ({
+      itemId: item.itemId,
+      itemName: item.itemName,
+      quantity: item.quantity,
+      price: item.price
+    })));
+  };
+
+  const handleCancelEditOrder = () => {
+    setEditingOrderId(null);
+    setEditingOrderItems([]);
+  };
+
+  const handleUpdateOrderItemQuantity = (itemId: string, change: number) => {
+    setEditingOrderItems(prev => 
+      prev.map(item => 
+        item.itemId === itemId 
+          ? { ...item, quantity: Math.max(0, item.quantity + change) }
+          : item
+      ).filter(item => item.quantity > 0)
+    );
+  };
+
+  const handleRemoveOrderItem = (itemId: string) => {
+    setEditingOrderItems(prev => prev.filter(item => item.itemId !== itemId));
+  };
+
+  const handleSaveOrderEdit = async () => {
+    if (!editingOrderId) return;
+    
+    if (editingOrderItems.length === 0) {
+      if (!confirm('This will delete the entire order. Continue?')) return;
+    }
+    
+    try {
+      await editOrder({
+        orderId: editingOrderId,
+        items: editingOrderItems.map(item => ({
+          itemId: item.itemId,
+          quantity: item.quantity
+        }))
+      });
+      
+      setEditingOrderId(null);
+      setEditingOrderItems([]);
+      const orders = await getMyOrders();
+      setMyOrders(orders);
+      alert('Order updated successfully');
+    } catch (error: any) {
+      console.error('Error updating order:', error);
+      alert('Error updating order. Please try again.');
+    }
+  };
 
   if (!jwt || !sessionId) {
     return (
@@ -519,7 +545,130 @@ const handlePlaceOrder = async () => {
             </div>
             
             <div className="flex-1 overflow-y-auto p-6">
-              {/* <MyOrders refreshTrigger={orderRefreshTrigger} /> */}
+              {myOrders.length === 0 ? (
+                <div className="text-center py-12">
+                  <svg className="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  <p className="text-lg text-gray-600 dark:text-neutral-400">No orders yet</p>
+                  <p className="text-sm text-gray-500 dark:text-neutral-500 mt-2">
+                    Your orders will appear here once you place them
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {myOrders.map((order) => (
+                    <div key={order.orderId} className="bg-white/70 dark:bg-neutral-900/50 rounded-xl border border-zinc-300/70 dark:border-white/20 p-6">
+                      <div className="flex items-start justify-between mb-4">
+                        <div>
+                          <p className="text-sm text-gray-600 dark:text-neutral-400">
+                            Order #{order.orderId.slice(0, 8)}
+                          </p>
+                          <p className="text-xs text-gray-500 dark:text-neutral-500 mt-1">
+                            {new Date(order.createdAt).toLocaleString()}
+                          </p>
+                        </div>
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          order.status.toLowerCase() === 'pending' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400' :
+                          order.status.toLowerCase() === 'preparing' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400' :
+                          order.status.toLowerCase() === 'served' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' :
+                          'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
+                        }`}>
+                          {order.status}
+                        </span>
+                      </div>
+
+                      {editingOrderId === order.orderId ? (
+                        <div className="space-y-3 mb-4">
+                          {editingOrderItems.map((item) => (
+                            <div key={item.itemId} className="flex items-center gap-3 p-3 bg-white/50 dark:bg-neutral-800/50 rounded-lg">
+                              <div className="flex-1">
+                                <p className="font-semibold">{item.itemName}</p>
+                                <p className="text-sm text-gray-600 dark:text-neutral-400">
+                                  ${item.price.toFixed(2)} each
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleUpdateOrderItemQuantity(item.itemId, -1)}
+                                  className="w-8 h-8 rounded-full border border-zinc-300 dark:border-white/20 flex items-center justify-center hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                                >
+                                  -
+                                </button>
+                                <span className="w-8 text-center font-medium">{item.quantity}</span>
+                                <button
+                                  onClick={() => handleUpdateOrderItemQuantity(item.itemId, 1)}
+                                  className="w-8 h-8 rounded-full border border-zinc-300 dark:border-white/20 flex items-center justify-center hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                                >
+                                  +
+                                </button>
+                                <button
+                                  onClick={() => handleRemoveOrderItem(item.itemId)}
+                                  className="ml-2 w-8 h-8 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600"
+                                  title="Remove item"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          {editingOrderItems.length === 0 && (
+                            <p className="text-center text-sm text-orange-600 dark:text-orange-400 py-4">
+                              All items removed. Saving will delete the order.
+                            </p>
+                          )}
+                          <div className="flex gap-2 pt-3">
+                            <button
+                              onClick={handleSaveOrderEdit}
+                              className="flex-1 bg-green-500 text-white rounded-lg py-2 hover:bg-green-600 font-medium"
+                            >
+                              Save Changes
+                            </button>
+                            <button
+                              onClick={handleCancelEditOrder}
+                              className="flex-1 bg-gray-500 text-white rounded-lg py-2 hover:bg-gray-600 font-medium"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="space-y-2 mb-4">
+                            {order.items.map((item) => (
+                              <div key={item.orderItemId} className="flex items-center justify-between text-sm">
+                                <span className="text-gray-700 dark:text-neutral-300">
+                                  {item.itemName} x{item.quantity}
+                                </span>
+                                <span className="font-medium">
+                                  ${(item.price * item.quantity).toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="pt-4 border-t border-zinc-300/70 dark:border-white/20">
+                            <div className="flex items-center justify-between font-bold mb-3">
+                              <span>Total</span>
+                              <span className="text-lg text-orange-600">
+                                ${order.totalAmount.toFixed(2)}
+                              </span>
+                            </div>
+                            {order.status.toLowerCase() === 'pending' && (
+                              <button
+                                onClick={() => handleStartEditOrder(order)}
+                                className="w-full bg-orange-500 text-white rounded-lg py-2 hover:bg-orange-600 font-medium"
+                              >
+                                Edit Order
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

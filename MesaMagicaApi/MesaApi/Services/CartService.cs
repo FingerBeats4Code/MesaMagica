@@ -179,6 +179,7 @@ namespace MesaMagicaApi.Services
             await InvalidateCacheAsync(sessionId);
         }
 
+        // Replace existing SubmitOrderAsync method
         public async Task<OrderResponse> SubmitOrderAsync(Guid sessionId, string tableId, string tenantKey, ClaimsPrincipal user)
         {
             using var transaction = await _context.Database.BeginTransactionAsync();
@@ -197,45 +198,100 @@ namespace MesaMagicaApi.Services
                 if (!cartItems.Any())
                     throw new InvalidOperationException("Cannot submit an empty cart.");
 
-                var unavailableItems = cartItems
-                    .Where(c => c.MenuItem == null || !c.MenuItem.IsAvailable || !c.MenuItem.Category.IsActive)
-                    .ToList();
+                // Check if there's an existing active order (not Closed)
+                var existingOrder = await _context.Orders
+                    .Include(o => o.OrderItems)
+                    .FirstOrDefaultAsync(o => o.SessionId == sessionId && o.Status != OrderStatus.Closed);
 
-                if (unavailableItems.Any())
+                OrderResponse orderResponse;
+
+                if (existingOrder != null)
                 {
-                    var itemNames = string.Join(", ", unavailableItems.Select(i => i.MenuItem?.Name ?? "Unknown"));
-                    throw new InvalidOperationException(
-                        $"The following items are no longer available: {itemNames}. Please remove them from your cart.");
+                    // UPDATE EXISTING ORDER
+                    _logger.LogInformation("Updating existing order {OrderId} for session {SessionId}",
+                        existingOrder.OrderId, sessionId);
+
+                    foreach (var cartItem in cartItems)
+                    {
+                        var existingItem = existingOrder.OrderItems
+                            .FirstOrDefault(oi => oi.ItemId == cartItem.ItemId);
+
+                        if (existingItem != null)
+                        {
+                            // Increase quantity of existing item
+                            existingItem.Quantity += cartItem.Quantity;
+                        }
+                        else
+                        {
+                            // Add new item to order
+                            existingOrder.OrderItems.Add(new OrderItem
+                            {
+                                OrderItemId = Guid.NewGuid(),
+                                OrderId = existingOrder.OrderId,
+                                ItemId = cartItem.ItemId,
+                                Quantity = cartItem.Quantity,
+                                Price = cartItem.MenuItem!.Price
+                            });
+                        }
+                    }
+
+                    // Recalculate total
+                    existingOrder.TotalAmount = existingOrder.OrderItems.Sum(oi => oi.Price * oi.Quantity);
+                    existingOrder.UpdatedAt = DateTime.UtcNow;
+
+                    await _context.SaveChangesAsync();
+
+                    orderResponse = new OrderResponse
+                    {
+                        OrderId = existingOrder.OrderId,
+                        SessionId = existingOrder.SessionId,
+                        Status = existingOrder.Status,
+                        TotalAmount = existingOrder.TotalAmount,
+                        CreatedAt = existingOrder.CreatedAt,
+                        UpdatedAt = existingOrder.UpdatedAt,
+                        Items = existingOrder.OrderItems.Select(oi => new OrderItemResponse
+                        {
+                            OrderItemId = oi.OrderItemId,
+                            ItemId = oi.ItemId,
+                            ItemName = cartItems.FirstOrDefault(c => c.ItemId == oi.ItemId)?.MenuItem?.Name ?? "Unknown",
+                            Quantity = oi.Quantity,
+                            Price = oi.Price
+                        }).ToList()
+                    };
+                }
+                else
+                {
+                    // CREATE NEW ORDER (existing logic)
+                    var orderRequest = new CreateOrderRequest
+                    {
+                        Items = cartItems.Select(c => new CreateOrderItemRequest
+                        {
+                            ItemId = c.ItemId,
+                            ItemName = c.MenuItem!.Name,
+                            Price = c.MenuItem.Price,
+                            Quantity = c.Quantity
+                        }).ToList()
+                    };
+
+                    orderResponse = await _orderService.CreateOrderAsync(orderRequest, user, tenantKey);
                 }
 
-                var orderRequest = new CreateOrderRequest
-                {
-                    Items = cartItems.Select(c => new CreateOrderItemRequest
-                    {
-                        ItemId = c.ItemId,
-                        ItemName = c.MenuItem!.Name,
-                        Price = c.MenuItem.Price,
-                        Quantity = c.Quantity
-                    }).ToList()
-                };
-
-                var orderResponse = await _orderService.CreateOrderAsync(orderRequest, user, tenantKey);
-
+                // Clear cart after successful order update/creation
                 _context.CartItems.RemoveRange(cartItems);
                 await _context.SaveChangesAsync();
 
                 await transaction.CommitAsync();
                 await InvalidateCacheAsync(sessionId);
 
-                _logger.LogInformation("Order submitted successfully. SessionId: {SessionId}, OrderId: {OrderId}, Items: {ItemCount}",
-                    sessionId, orderResponse.OrderId, cartItems.Count);
+                _logger.LogInformation("Order {Action} successfully. SessionId: {SessionId}, OrderId: {OrderId}",
+                    existingOrder != null ? "updated" : "created", sessionId, orderResponse.OrderId);
 
                 return orderResponse;
             }
             catch (Exception ex)
             {
                 await transaction.RollbackAsync();
-                _logger.LogError(ex, "Failed to submit order for SessionId: {SessionId}", sessionId);
+                _logger.LogError(ex, "Failed to submit/update order for SessionId: {SessionId}", sessionId);
                 throw;
             }
         }

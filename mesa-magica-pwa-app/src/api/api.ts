@@ -822,10 +822,11 @@ export const toggleStaffActive = async (userId: string): Promise<Staff> => {
 export const getMyOrders = async (): Promise<OrderResponse[]> => {
   try {
     console.log(`[${new Date().toISOString()}] 📋 Fetching my orders`);
-    const response = await api.get('/orders/my-orders');
+    const response = await api.get('/api/orders/my-orders'); // FIXED: Added /api prefix
+    console.log(`[${new Date().toISOString()}] ✅ Retrieved ${response.data.length} orders`);
     return response.data;
   } catch (error: any) {
-    console.error(`[${new Date().toISOString()}] ❌ Error fetching my orders:`, error);
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching my orders:`, error?.response?.status, error?.response?.data);
     throw error;
   }
 };
@@ -959,5 +960,14 @@ export const getSessionDetailsAdmin = async (sessionId: string): Promise<Session
     throw error;
   }
 };
-
+export const getPreparingItems = async (orderId: string): Promise<{ preparingItemIds: string[] }> => {
+  try {
+    console.log(`[${new Date().toISOString()}] Fetching preparing items for order: ${orderId}`);
+    const response = await api.get(`/api/admin/order/${orderId}/preparing-items`);
+    return response.data;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error fetching preparing items:`, error);
+    throw error;
+  }
+};
 export default api;

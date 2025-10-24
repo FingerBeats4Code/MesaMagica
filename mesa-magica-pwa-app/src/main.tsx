@@ -11,6 +11,7 @@ import Header from "@/components/Header";
 import AdminLayout from "@/components/AdminLayout";
 import { useState, useEffect } from "react";
 import { getCart, CartItem } from "@/api/api";
+import { SignalRProvider } from "@/context/SignalRContext";
 import "./index.css";
 
 // Admin pages
@@ -161,17 +162,19 @@ function App() {
 const rootElement = document.getElementById("root");
 if (rootElement) {
   createRoot(rootElement).render(
-    <BrowserRouter>
-      <GlobalProvider>
-        <AppProvider>
-          <SessionTimeoutProvider>
-            <SessionInitializer>
-              <App />
-            </SessionInitializer>
-          </SessionTimeoutProvider>
-        </AppProvider>
-      </GlobalProvider>
-    </BrowserRouter>
+<BrowserRouter>
+  <GlobalProvider>
+    <AppProvider>
+      <SignalRProvider>
+        <SessionTimeoutProvider>
+          <SessionInitializer>
+            <App />
+          </SessionInitializer>
+        </SessionTimeoutProvider>
+      </SignalRProvider>
+    </AppProvider>
+  </GlobalProvider>
+</BrowserRouter>
   );
 } else {
   console.error("Root element not found");

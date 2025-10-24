@@ -1,43 +1,46 @@
 // mesa-magica-pwa-app/src/components/MyOrders.tsx
 import React, { useState, useEffect } from 'react';
 import { getMyOrders, OrderResponse } from '@/api/api';
+import { useSignalR } from '@/context/SignalRContext';
 
 const MyOrders: React.FC = () => {
   const [orders, setOrders] = useState<OrderResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { lastOrderUpdate } = useSignalR();
 
-  //-----------------CHANGE: Enhanced error handling for session-related failures-----------------2025-01-22----------------------
-  // Detects 400/401/404 errors which indicate session is closed or invalid
-  // Shows user-friendly message advising to refresh the page
-  useEffect(() => {
-    const fetchOrders = async () => {
-      try {
-        setLoading(true);
-        const data = await getMyOrders();
-        setOrders(data);
-      } catch (err: any) {
-        console.error('Error fetching orders:', err);
-        
-        // Check if error is session-related
-        // 400: Session closed/invalid
-        // 401: Unauthorized/expired token
-        // 404: Resource not found (session doesn't exist)
-        if (err?.response?.status === 400 || 
-            err?.response?.status === 401 || 
-            err?.response?.status === 404) {
-          setError('Unable to load orders. Your session may have expired. Please refresh the page to continue.');
-        } else {
-          setError(err.message || 'Failed to load orders');
-        }
-      } finally {
-        setLoading(false);
+  const fetchOrders = async () => {
+    try {
+      setLoading(true);
+      const data = await getMyOrders();
+      setOrders(data);
+      setError(null);
+    } catch (err: any) {
+      console.error('Error fetching orders:', err);
+      
+      if (err?.response?.status === 400 || 
+          err?.response?.status === 401 || 
+          err?.response?.status === 404) {
+        setError('Unable to load orders. Your session may have expired. Please refresh the page to continue.');
+      } else {
+        setError(err.message || 'Failed to load orders');
       }
-    };
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchOrders();
   }, []);
-  //-----------------END CHANGE----------------------
+
+  // Refresh when SignalR receives order update
+  useEffect(() => {
+    if (lastOrderUpdate) {
+      console.log(`[${new Date().toISOString()}] 🔄 Refreshing orders due to SignalR update`);
+      fetchOrders();
+    }
+  }, [lastOrderUpdate]);
 
   const getStatusColor = (status: string) => {
     switch (status.toLowerCase()) {
@@ -61,14 +64,12 @@ const MyOrders: React.FC = () => {
     return (
       <div className="rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4">
         <p className="text-red-600 dark:text-red-400">{error}</p>
-        {/*//-----------------CHANGE: Added refresh button for user convenience-----------------2025-01-22----------------------*/}
         <button 
           onClick={() => window.location.reload()} 
           className="mt-3 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm"
         >
           Refresh Page
         </button>
-        {/*//-----------------END CHANGE----------------------*/}
       </div>
     );
   }
@@ -86,7 +87,14 @@ const MyOrders: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      <h2 className="text-2xl font-bold mb-4">My Orders</h2>
+      {lastOrderUpdate && (
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+          <p className="text-sm text-blue-700 dark:text-blue-300">
+            ✨ Order status updated: {lastOrderUpdate.status}
+          </p>
+        </div>
+      )}
+      
       {orders.map((order) => (
         <div
           key={order.orderId}

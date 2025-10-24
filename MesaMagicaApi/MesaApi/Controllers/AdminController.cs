@@ -424,6 +424,36 @@ namespace MesaApi.Controllers
                 return StatusCode(500, new { message = "Error fetching session details" });
             }
         }
+
+        // Add new endpoint to AdminController.cs
+        [HttpGet("order/{orderId}/preparing-items")]
+        public async Task<IActionResult> GetPreparingItems(Guid orderId)
+        {
+            var tenantKey = User.FindFirst(JwtClaims.TenantKey)?.Value;
+            if (string.IsNullOrEmpty(tenantKey))
+                return Unauthorized("Tenant key not found in JWT.");
+
+            try
+            {
+                var order = await _dbContext.Orders
+                    .Include(o => o.OrderItems)
+                    .ThenInclude(oi => oi.MenuItem)
+                    .FirstOrDefaultAsync(o => o.OrderId == orderId && o.Status == OrderStatus.Preparing);
+
+                if (order == null)
+                    return Ok(new { preparingItemIds = new List<Guid>() });
+
+                // Return item IDs that are being prepared (cannot be removed)
+                var preparingItemIds = order.OrderItems.Select(oi => oi.ItemId).ToList();
+
+                return Ok(new { preparingItemIds });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error fetching preparing items for order {OrderId}", orderId);
+                return StatusCode(500, "Error fetching preparing items");
+            }
+        }
     }
 
     public class UpdateOrderStatusRequest
