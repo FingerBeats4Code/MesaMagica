@@ -970,4 +970,120 @@ export const getPreparingItems = async (orderId: string): Promise<{ preparingIte
     throw error;
   }
 };
+
+// mesa-magica-pwa-app/src/api/api.ts
+// Add these interfaces and function to your existing api.ts file
+
+// ==================== FEEDBACK INTERFACES ====================
+
+export interface SubmitFeedbackRequest {
+  orderId: string;
+  rating: number; // 1-5 stars
+  comment?: string;
+  email?: string;
+  phone?: string;
+  name?: string;
+  googleEmail?: string;
+  categories?: {
+    food?: number;
+    service?: number;
+    ambiance?: number;
+    value?: number;
+  };
+}
+
+export interface FeedbackResponse {
+  feedbackId: string;
+  orderId: string;
+  rating: number;
+  comment?: string;
+  submittedAt: string;
+  message: string;
+}
+
+// mesa-magica-pwa-app/src/api/api.ts
+// Add these interfaces and function to your existing api.ts file
+
+// ==================== FEEDBACK INTERFACES ====================
+
+export interface SubmitFeedbackRequest {
+  orderId: string;
+  rating: number; // 1-5 stars
+  comment?: string;
+  email?: string;
+  phone?: string;
+  name?: string;
+  googleEmail?: string;
+  categories?: {
+    food?: number;
+    service?: number;
+    ambiance?: number;
+    value?: number;
+  };
+}
+
+export interface FeedbackResponse {
+  feedbackId: string;
+  orderId: string;
+  rating: number;
+  comment?: string;
+  submittedAt: string;
+  message: string;
+}
+
+// ==================== FEEDBACK ENDPOINTS ====================
+
+/**
+ * Submit customer feedback for a closed order
+ * FALLBACK: Returns mock response until backend is implemented
+ */
+export const submitFeedback = async (payload: SubmitFeedbackRequest): Promise<FeedbackResponse> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 📝 Submitting feedback for order: ${payload.orderId}`);
+    
+    // TODO: Replace with actual API call when backend is ready
+    // const response = await api.post('/api/feedback/submit', payload);
+    // return response.data;
+    
+    // FALLBACK: Mock response
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const mockResponse: FeedbackResponse = {
+          feedbackId: `feedback-${Date.now()}`,
+          orderId: payload.orderId,
+          rating: payload.rating,
+          comment: payload.comment,
+          submittedAt: new Date().toISOString(),
+          message: 'Thank you for your feedback! We appreciate your input.'
+        };
+        console.log(`[${new Date().toISOString()}] ✅ Feedback submitted (mock):`, mockResponse);
+        resolve(mockResponse);
+      }, 1000); // Simulate network delay
+    });
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error submitting feedback:`, error.response?.data || error.message);
+    throw error;
+  }
+};
+
+/**
+ * Check if feedback has been submitted for an order
+ * FALLBACK: Returns false until backend is implemented
+ */
+export const checkFeedbackSubmitted = async (orderId: string): Promise<boolean> => {
+  try {
+    console.log(`[${new Date().toISOString()}] 🔍 Checking feedback status for order: ${orderId}`);
+    
+    // TODO: Replace with actual API call when backend is ready
+    // const response = await api.get(`/api/feedback/check/${orderId}`);
+    // return response.data.submitted;
+    
+    // FALLBACK: Check localStorage for submitted feedback
+    const submittedFeedback = localStorage.getItem(`feedback-${orderId}`);
+    return submittedFeedback !== null;
+  } catch (error: any) {
+    console.error(`[${new Date().toISOString()}] ❌ Error checking feedback:`, error);
+    return false;
+  }
+};
 export default api;
