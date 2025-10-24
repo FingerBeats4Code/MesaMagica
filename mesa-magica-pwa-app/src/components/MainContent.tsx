@@ -3,7 +3,7 @@ import React, { useState, useEffect } from "react";
 import { useAppContext } from "@/context/AppContext";
 import Menu from "@/components/Menu";
 import { useSearchParams } from 'react-router-dom';
-import { getCategories, getMenuItems, submitOrder, addToCartBackend, removeFromCartBackend, getCart, getMyOrders, getPreparingItems, Category, MenuItemResponse, CartItem, OrderResponse } from "@/api/api";
+import { getCategories, getMenuItems, submitOrder, addToCartBackend, removeFromCartBackend, getCart, getMyOrders, editOrder, Category, MenuItemResponse, CartItem, OrderResponse } from "@/api/api";
 
 interface FoodCardProps {
   name: string;
@@ -15,23 +15,11 @@ interface FoodCardProps {
   onDecrement?: () => void;
   quantity?: number;
   disabled?: boolean;
-  canDecrement?: boolean;
 }
 
-const FoodCard: React.FC<FoodCardProps> = ({ 
-  name, 
-  price, 
-  description, 
-  imageSrc, 
-  onAddToCart, 
-  onIncrement, 
-  onDecrement, 
-  quantity = 0, 
-  disabled = false,
-  canDecrement = true 
-}) => {
+const FoodCard: React.FC<FoodCardProps> = ({ name, price, description, imageSrc, onAddToCart, onIncrement, onDecrement, quantity = 0, disabled = false }) => {
   return (
-    <div className={`bg-white/70 dark:bg-neutral-900/50 rounded-xl border border-zinc-300/70 dark:border-white/20 overflow-hidden hover:shadow-lg transition-shadow`}>
+    <div className={`bg-white/70 dark:bg-neutral-900/50 rounded-xl border border-zinc-300/70 dark:border-white/20 overflow-hidden hover:shadow-lg transition-shadow ${disabled ? 'opacity-60' : ''}`}>
       <img alt={name} src={imageSrc} className="object-cover w-full h-48" />
       <div className="p-6">
         <div className="items-start justify-between mb-2 flex">
@@ -45,8 +33,7 @@ const FoodCard: React.FC<FoodCardProps> = ({
               type="button"
               className="border border-zinc-300/70 dark:border-white/20 flex hover:bg-neutral-100 dark:hover:bg-neutral-800 w-8 h-8 rounded-full items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
               onClick={onDecrement}
-              disabled={quantity <= 0 || !canDecrement}
-              title={!canDecrement && quantity > 0 ? "Item is being prepared and cannot be removed" : ""}
+              disabled={quantity <= 0 || disabled}
             >
               -
             </button>
@@ -69,9 +56,9 @@ const FoodCard: React.FC<FoodCardProps> = ({
             Add to Cart
           </button>
         </div>
-        {!canDecrement && quantity > 0 && (
-          <p className="text-xs text-blue-600 dark:text-blue-400 mt-2 text-center">
-            ⏳ This item is being prepared
+        {disabled && (
+          <p className="text-xs text-orange-600 dark:text-orange-400 mt-2 text-center">
+            Order already placed - use cart to modify
           </p>
         )}
       </div>
@@ -96,11 +83,12 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
   const [myOrders, setMyOrders] = useState<OrderResponse[]>([]);
-  const [activeOrders, setActiveOrders] = useState<OrderResponse[]>([]);
-  const [preparingItemIds, setPreparingItemIds] = useState<Set<string>>(new Set());
+  const [hasActiveOrder, setHasActiveOrder] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [orderRefreshTrigger, setOrderRefreshTrigger] = useState(0);
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [editingOrderItems, setEditingOrderItems] = useState<Array<{itemId: string; itemName: string; quantity: number; price: number}>>([]);
   const { jwt, sessionId, tenantSlug } = useAppContext();
 
   useEffect(() => {
@@ -139,26 +127,15 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
         setMenuItems(items);
         setMyOrders(orders);
 
-        // Get active orders (non-closed)
-        const active = orders.filter(o => o.status.toLowerCase() !== 'closed');
-        setActiveOrders(active);
+        // Check if there are any active (non-closed) orders
+        const activeOrders = orders.filter(o => o.status.toLowerCase() !== 'closed');
+        setHasActiveOrder(activeOrders.length > 0);
 
-        // Fetch preparing items if there's a preparing order
-        const preparingOrder = active.find(o => o.status.toLowerCase() === 'preparing');
-        if (preparingOrder) {
-          try {
-            const { preparingItemIds } = await getPreparingItems(preparingOrder.orderId);
-            setPreparingItemIds(new Set(preparingItemIds));
-            console.log(`[${new Date().toISOString()}] Found ${preparingItemIds.length} items being prepared`);
-          } catch (err) {
-            console.warn('Could not fetch preparing items:', err);
-            setPreparingItemIds(new Set());
-          }
-        } else {
-          setPreparingItemIds(new Set());
+        if (activeOrders.length > 0) {
+          console.log(`[${new Date().toISOString()}] Found ${activeOrders.length} active order(s) - menu items disabled`);
         }
         
-        console.log(`[${new Date().toISOString()}] ✅ Data loaded - Categories: ${cats.length}, Items: ${items.length}, Active Orders: ${active.length}`);
+        console.log(`[${new Date().toISOString()}] ✅ Data loaded - Categories: ${cats.length}, Items: ${items.length}, Orders: ${orders.length}`);
       } catch (error) {
         console.error('Failed to fetch initial data:', error);
         setError('Failed to load menu. Please try refreshing the page.');
@@ -168,21 +145,20 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
     };
 
     fetchInitialData();
-  }, [jwt, sessionId, selectedCategory, tenantSlug, tableId, orderRefreshTrigger]);
+  }, [jwt, sessionId, selectedCategory, tenantSlug, tableId]);
 
   const handleCategorySelect = (categoryId: string | null) => {
     setSelectedCategory(categoryId);
   };
 
-  // Check if an item can be removed from cart
-  const canRemoveItem = (itemId: string): boolean => {
-    // If item is in preparing order, it cannot be removed
-    return !preparingItemIds.has(itemId);
-  };
-
   const handleAddToCart = async (item: MenuItemResponse) => {
     if (!sessionId) {
       alert('Session not initialized. Please try again.');
+      return;
+    }
+
+    if (hasActiveOrder) {
+      alert('You already have an active order. Please use the cart to modify your order or wait for it to be completed.');
       return;
     }
 
@@ -207,6 +183,11 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
       return;
     }
 
+    if (hasActiveOrder) {
+      alert('You already have an active order. Please use the cart to modify your order.');
+      return;
+    }
+
     try {
       await addToCartBackend(sessionId, itemId, 1);
       onCartUpdate();
@@ -225,12 +206,6 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
   const handleDecrement = async (itemId: string) => {
     if (!sessionId) {
       alert('Session not initialized. Please try again.');
-      return;
-    }
-
-    // Check if item is being prepared
-    if (!canRemoveItem(itemId)) {
-      alert('This item is being prepared and cannot be removed from your order.');
       return;
     }
 
@@ -255,59 +230,97 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
       return;
     }
 
+    if (hasActiveOrder) {
+      alert('You already have an active order. Please wait for it to be completed before placing a new order.');
+      return;
+    }
+
     try {
       console.log(`[${new Date().toISOString()}] Submitting order for session ${sessionId}`);
-      
-      // Submit the order (backend will update existing order if there is one)
       const orderResponse = await submitOrder(sessionId, { tableId });
+      console.log(`[${new Date().toISOString()}] ✅ Order submitted successfully: ${orderResponse.orderId}`);
       
-      console.log(`[${new Date().toISOString()}] ✅ Order ${activeOrders.length > 0 ? 'updated' : 'submitted'} successfully: ${orderResponse.orderId}`);
-      
-      // Show appropriate success message
-      const message = activeOrders.length > 0 
-        ? `Order updated successfully! Order ID: ${orderResponse.orderId}\n\nYour new items have been added to the kitchen.`
-        : `Order submitted successfully! Order ID: ${orderResponse.orderId}`;
-      
-      alert(message);
-      
-      // Close the cart modal
+      alert(`Order submitted successfully! Order ID: ${orderResponse.orderId}`);
+      setHasActiveOrder(true);
       onCloseCart();
-      
-      // Trigger order refresh by incrementing counter
       setOrderRefreshTrigger(prev => prev + 1);
       
-      // Try to refresh cart and orders
       try {
         await onCartUpdate();
         const orders = await getMyOrders();
         setMyOrders(orders);
-        
-        const active = orders.filter(o => o.status.toLowerCase() !== 'closed');
-        setActiveOrders(active);
-        
-        // Refresh preparing items
-        const preparingOrder = active.find(o => o.status.toLowerCase() === 'preparing');
-        if (preparingOrder) {
-          const { preparingItemIds } = await getPreparingItems(preparingOrder.orderId);
-          setPreparingItemIds(new Set(preparingItemIds));
-        } else {
-          setPreparingItemIds(new Set());
-        }
-        
         console.log(`[${new Date().toISOString()}] ✅ Cart and orders refreshed`);
       } catch (refreshError: any) {
-        console.log(`[${new Date().toISOString()}] ℹ️ Could not refresh cart/orders:`, refreshError?.response?.status);
+        console.log(`[${new Date().toISOString()}] ℹ️ Could not refresh cart/orders (session may be processing):`, refreshError?.response?.status);
       }
-      
     } catch (error: any) {
       console.error(`[${new Date().toISOString()}] ❌ Error submitting order:`, error);
-      
       if (error?.response?.status === 400 || error?.response?.status === 401) {
         alert('Your session has expired. The page will reload to create a new session.');
         window.location.reload();
       } else {
         alert('Error submitting order. Please try again.');
       }
+    }
+  };
+
+  const handleStartEditOrder = (order: OrderResponse) => {
+    if (order.status.toLowerCase() !== 'pending') {
+      alert('Only pending orders can be edited');
+      return;
+    }
+    setEditingOrderId(order.orderId);
+    setEditingOrderItems(order.items.map(item => ({
+      itemId: item.itemId,
+      itemName: item.itemName,
+      quantity: item.quantity,
+      price: item.price
+    })));
+  };
+
+  const handleCancelEditOrder = () => {
+    setEditingOrderId(null);
+    setEditingOrderItems([]);
+  };
+
+  const handleUpdateOrderItemQuantity = (itemId: string, change: number) => {
+    setEditingOrderItems(prev => 
+      prev.map(item => 
+        item.itemId === itemId 
+          ? { ...item, quantity: Math.max(0, item.quantity + change) }
+          : item
+      ).filter(item => item.quantity > 0)
+    );
+  };
+
+  const handleRemoveOrderItem = (itemId: string) => {
+    setEditingOrderItems(prev => prev.filter(item => item.itemId !== itemId));
+  };
+
+  const handleSaveOrderEdit = async () => {
+    if (!editingOrderId) return;
+    
+    if (editingOrderItems.length === 0) {
+      if (!confirm('This will delete the entire order. Continue?')) return;
+    }
+    
+    try {
+      await editOrder({
+        orderId: editingOrderId,
+        items: editingOrderItems.map(item => ({
+          itemId: item.itemId,
+          quantity: item.quantity
+        }))
+      });
+      
+      setEditingOrderId(null);
+      setEditingOrderItems([]);
+      const orders = await getMyOrders();
+      setMyOrders(orders);
+      alert('Order updated successfully');
+    } catch (error: any) {
+      console.error('Error updating order:', error);
+      alert('Error updating order. Please try again.');
     }
   };
 
@@ -358,18 +371,16 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
   return (
     <>
       <main className="mx-auto px-8 relative z-20 max-w-7xl">
-        {/* Active Order Info Banner */}
-        {activeOrders.length > 0 && (
-          <div className="mb-6 p-4 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800">
+        {hasActiveOrder && (
+          <div className="mb-6 p-4 rounded-xl bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800">
             <div className="flex items-start gap-3">
-              <svg className="w-6 h-6 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-6 h-6 text-orange-600 dark:text-orange-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               <div className="flex-1">
-                <p className="font-semibold text-blue-900 dark:text-blue-100">Active Order in Progress</p>
-                <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
-                  You can continue adding items to your order. Items marked as "Preparing" cannot be removed. 
-                  Click "Place Order" to send new items to the kitchen.
+                <p className="font-semibold text-orange-900 dark:text-orange-100">Active Order in Progress</p>
+                <p className="text-sm text-orange-700 dark:text-orange-300 mt-1">
+                  You already have an order being prepared. Use your cart to modify the current order, or wait for it to be completed before placing a new order.
                 </p>
               </div>
             </div>
@@ -418,8 +429,7 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
                     onIncrement={() => handleIncrement(item.itemId)}
                     onDecrement={() => handleDecrement(item.itemId)}
                     quantity={cart.find((cartItem) => cartItem.menuItem.itemId === item.itemId)?.quantity || 0}
-                    disabled={false}
-                    canDecrement={canRemoveItem(item.itemId)}
+                    disabled={hasActiveOrder}
                   />
                 ))}
               </div>
@@ -454,60 +464,40 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {cart.map(({ menuItem, quantity }, idx) => {
-                    const isBeingPrepared = preparingItemIds.has(menuItem.itemId);
-                    
-                    return (
-                      <div key={idx} className="flex items-center gap-4 p-4 bg-white/50 dark:bg-neutral-800/50 rounded-lg">
-                        <img 
-                          src={menuItem.imageUrl || 'https://placehold.co/80x80/cccccc/ffffff?text=No+Image'} 
-                          alt={menuItem.name}
-                          className="w-20 h-20 object-cover rounded-lg"
-                        />
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <p className="font-semibold">{menuItem.name}</p>
-                            {isBeingPrepared && (
-                              <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-400 text-xs rounded-full flex items-center gap-1">
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                Preparing
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-sm text-gray-600 dark:text-neutral-400">
-                            ${menuItem.price.toFixed(2)} x {quantity}
-                          </p>
-                          <div className="flex items-center gap-2 mt-2">
-                            <button
-                              onClick={() => handleDecrement(menuItem.itemId)}
-                              className="w-6 h-6 rounded-full border border-zinc-300/70 dark:border-white/20 flex items-center justify-center hover:bg-neutral-100 dark:hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                              disabled={isBeingPrepared}
-                              title={isBeingPrepared ? "Item is being prepared" : ""}
-                            >
-                              -
-                            </button>
-                            <span className="w-8 text-center font-medium">{quantity}</span>
-                            <button
-                              onClick={() => handleIncrement(menuItem.itemId)}
-                              className="w-6 h-6 rounded-full border border-zinc-300/70 dark:border-white/20 flex items-center justify-center hover:bg-neutral-100 dark:hover:bg-neutral-700"
-                            >
-                              +
-                            </button>
-                          </div>
-                          {isBeingPrepared && (
-                            <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
-                              Cannot remove - being prepared in kitchen
-                            </p>
-                          )}
-                        </div>
-                        <div className="text-right">
-                          <p className="font-bold">${(menuItem.price * quantity).toFixed(2)}</p>
+                  {cart.map(({ menuItem, quantity }, idx) => (
+                    <div key={idx} className="flex items-center gap-4 p-4 bg-white/50 dark:bg-neutral-800/50 rounded-lg">
+                      <img 
+                        src={menuItem.imageUrl || 'https://placehold.co/80x80/cccccc/ffffff?text=No+Image'} 
+                        alt={menuItem.name}
+                        className="w-20 h-20 object-cover rounded-lg"
+                      />
+                      <div className="flex-1">
+                        <p className="font-semibold">{menuItem.name}</p>
+                        <p className="text-sm text-gray-600 dark:text-neutral-400">
+                          ${menuItem.price.toFixed(2)} x {quantity}
+                        </p>
+                        <div className="flex items-center gap-2 mt-2">
+                          <button
+                            onClick={() => handleDecrement(menuItem.itemId)}
+                            className="w-6 h-6 rounded-full border border-zinc-300/70 dark:border-white/20 flex items-center justify-center hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                          >
+                            -
+                          </button>
+                          <span className="w-8 text-center">{quantity}</span>
+                          <button
+                            onClick={() => handleIncrement(menuItem.itemId)}
+                            className="w-6 h-6 rounded-full border border-zinc-300/70 dark:border-white/20 flex items-center justify-center hover:bg-neutral-100 dark:hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={hasActiveOrder}
+                          >
+                            +
+                          </button>
                         </div>
                       </div>
-                    );
-                  })}
+                      <div className="text-right">
+                        <p className="font-bold">${(menuItem.price * quantity).toFixed(2)}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -522,13 +512,14 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
                 </div>
                 <button
                   onClick={handlePlaceOrder}
-                  className="w-full bg-neutral-900 dark:bg-orange-500 text-white py-3 rounded-lg font-medium hover:bg-neutral-700 dark:hover:bg-orange-600 transition-colors"
+                  disabled={hasActiveOrder}
+                  className="w-full bg-neutral-900 dark:bg-orange-500 text-white py-3 rounded-lg font-medium hover:bg-neutral-700 dark:hover:bg-orange-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {activeOrders.length > 0 ? 'Update Order' : 'Place Order'}
+                  {hasActiveOrder ? 'Order Already Placed' : 'Place Order'}
                 </button>
-                {activeOrders.length > 0 && (
-                  <p className="text-xs text-center text-blue-600 dark:text-blue-400 mt-2">
-                    New items will be added to your existing order
+                {hasActiveOrder && (
+                  <p className="text-xs text-center text-orange-600 dark:text-orange-400 mt-2">
+                    Use cart to modify your current order
                   </p>
                 )}
               </div>
@@ -556,6 +547,9 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
             <div className="flex-1 overflow-y-auto p-6">
               {myOrders.length === 0 ? (
                 <div className="text-center py-12">
+                  <svg className="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
                   <p className="text-lg text-gray-600 dark:text-neutral-400">No orders yet</p>
                   <p className="text-sm text-gray-500 dark:text-neutral-500 mt-2">
                     Your orders will appear here once you place them
@@ -564,10 +558,7 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
               ) : (
                 <div className="space-y-4">
                   {myOrders.map((order) => (
-                    <div
-                      key={order.orderId}
-                      className="bg-white/70 dark:bg-neutral-900/50 rounded-xl border border-zinc-300/70 dark:border-white/20 p-6"
-                    >
+                    <div key={order.orderId} className="bg-white/70 dark:bg-neutral-900/50 rounded-xl border border-zinc-300/70 dark:border-white/20 p-6">
                       <div className="flex items-start justify-between mb-4">
                         <div>
                           <p className="text-sm text-gray-600 dark:text-neutral-400">
@@ -577,42 +568,103 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
                             {new Date(order.createdAt).toLocaleString()}
                           </p>
                         </div>
-                        <span
-                          className={`px-3 py-1 rounded-full text-xs font-medium ${
-                            order.status.toLowerCase() === 'pending' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400' :
-                            order.status.toLowerCase() === 'preparing' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400' :
-                            order.status.toLowerCase() === 'served' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' :
-                            'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
-                          }`}
-                        >
+                        <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          order.status.toLowerCase() === 'pending' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-400' :
+                          order.status.toLowerCase() === 'preparing' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/20 dark:text-blue-400' :
+                          order.status.toLowerCase() === 'served' ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400' :
+                          'bg-gray-100 text-gray-800 dark:bg-gray-900/20 dark:text-gray-400'
+                        }`}>
                           {order.status}
                         </span>
                       </div>
 
-                      <div className="space-y-2 mb-4">
-                        {order.items.map((item) => (
-                          <div
-                            key={item.orderItemId}
-                            className="flex items-center justify-between text-sm"
-                          >
-                            <span className="text-gray-700 dark:text-neutral-300">
-                              {item.itemName} x{item.quantity}
-                            </span>
-                            <span className="font-medium">
-                              ${(item.price * item.quantity).toFixed(2)}
-                            </span>
+                      {editingOrderId === order.orderId ? (
+                        <div className="space-y-3 mb-4">
+                          {editingOrderItems.map((item) => (
+                            <div key={item.itemId} className="flex items-center gap-3 p-3 bg-white/50 dark:bg-neutral-800/50 rounded-lg">
+                              <div className="flex-1">
+                                <p className="font-semibold">{item.itemName}</p>
+                                <p className="text-sm text-gray-600 dark:text-neutral-400">
+                                  ${item.price.toFixed(2)} each
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => handleUpdateOrderItemQuantity(item.itemId, -1)}
+                                  className="w-8 h-8 rounded-full border border-zinc-300 dark:border-white/20 flex items-center justify-center hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                                >
+                                  -
+                                </button>
+                                <span className="w-8 text-center font-medium">{item.quantity}</span>
+                                <button
+                                  onClick={() => handleUpdateOrderItemQuantity(item.itemId, 1)}
+                                  className="w-8 h-8 rounded-full border border-zinc-300 dark:border-white/20 flex items-center justify-center hover:bg-neutral-100 dark:hover:bg-neutral-700"
+                                >
+                                  +
+                                </button>
+                                <button
+                                  onClick={() => handleRemoveOrderItem(item.itemId)}
+                                  className="ml-2 w-8 h-8 rounded-full bg-red-500 text-white flex items-center justify-center hover:bg-red-600"
+                                  title="Remove item"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          {editingOrderItems.length === 0 && (
+                            <p className="text-center text-sm text-orange-600 dark:text-orange-400 py-4">
+                              All items removed. Saving will delete the order.
+                            </p>
+                          )}
+                          <div className="flex gap-2 pt-3">
+                            <button
+                              onClick={handleSaveOrderEdit}
+                              className="flex-1 bg-green-500 text-white rounded-lg py-2 hover:bg-green-600 font-medium"
+                            >
+                              Save Changes
+                            </button>
+                            <button
+                              onClick={handleCancelEditOrder}
+                              className="flex-1 bg-gray-500 text-white rounded-lg py-2 hover:bg-gray-600 font-medium"
+                            >
+                              Cancel
+                            </button>
                           </div>
-                        ))}
-                      </div>
-
-                      <div className="pt-4 border-t border-zinc-300/70 dark:border-white/20">
-                        <div className="flex items-center justify-between font-bold">
-                          <span>Total</span>
-                          <span className="text-lg text-orange-600">
-                            ${order.totalAmount.toFixed(2)}
-                          </span>
                         </div>
-                      </div>
+                      ) : (
+                        <>
+                          <div className="space-y-2 mb-4">
+                            {order.items.map((item) => (
+                              <div key={item.orderItemId} className="flex items-center justify-between text-sm">
+                                <span className="text-gray-700 dark:text-neutral-300">
+                                  {item.itemName} x{item.quantity}
+                                </span>
+                                <span className="font-medium">
+                                  ${(item.price * item.quantity).toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="pt-4 border-t border-zinc-300/70 dark:border-white/20">
+                            <div className="flex items-center justify-between font-bold mb-3">
+                              <span>Total</span>
+                              <span className="text-lg text-orange-600">
+                                ${order.totalAmount.toFixed(2)}
+                              </span>
+                            </div>
+                            {order.status.toLowerCase() === 'pending' && (
+                              <button
+                                onClick={() => handleStartEditOrder(order)}
+                                className="w-full bg-orange-500 text-white rounded-lg py-2 hover:bg-orange-600 font-medium"
+                              >
+                                Edit Order
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -624,4 +676,5 @@ const MainContent: React.FC<MainContentProps> = ({ showCart, onCloseCart, showOr
     </>
   );
 };
+
 export default MainContent;
