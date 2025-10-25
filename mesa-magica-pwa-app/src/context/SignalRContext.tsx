@@ -1,39 +1,54 @@
 // mesa-magica-pwa-app/src/context/SignalRContext.tsx
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useAppContext } from '@/context/AppContext';
-import { signalRService, OrderStatusNotification, SessionExpiredNotification } from '@/services/signalr.service';
+// FIXED VERSION - Uses signalRService with proper data extraction
+
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import { signalRService, OrderStatusNotification } from '@/services/signalr.service';
+import { useAppContext } from './AppContext';
 
 interface SignalRContextType {
   isConnected: boolean;
   lastOrderUpdate: OrderStatusNotification | null;
+  connectionError: string | null;
 }
 
-const SignalRContext = createContext<SignalRContextType | undefined>(undefined);
+const SignalRContext = createContext<SignalRContextType>({
+  isConnected: false,
+  lastOrderUpdate: null,
+  connectionError: null,
+});
+
+export const useSignalR = () => useContext(SignalRContext);
 
 export const SignalRProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { jwt } = useAppContext();
+  const { jwt, sessionId } = useAppContext();
   const [isConnected, setIsConnected] = useState(false);
   const [lastOrderUpdate, setLastOrderUpdate] = useState<OrderStatusNotification | null>(null);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!jwt) {
-      signalRService.disconnect();
-      setIsConnected(false);
+  const setupConnection = useCallback(async () => {
+    if (!jwt || !sessionId) {
+      console.log(`[${new Date().toISOString()}] ⏭️ Waiting for JWT/SessionId before connecting to SignalR`);
       return;
     }
 
-    const connect = async () => {
-      const connected = await signalRService.connect(jwt, true);
+    try {
+      console.log(`[${new Date().toISOString()}] 🔌 Connecting customer to SignalR...`);
+
+      const connected = await signalRService.connect(jwt, true); // true = customer
       setIsConnected(connected);
 
       if (connected) {
+        console.log(`[${new Date().toISOString()}] ✅ Customer SignalR connected`);
+        
         // Customer listens to order status changes
         signalRService.onOrderStatusChanged((notification) => {
-          console.log(`[${new Date().toISOString()}] 🔔 Order status updated:`, notification);
+          console.log(`[${new Date().toISOString()}] 🔔 Customer received OrderStatusChanged:`, notification);
+          
+          // Notification is already validated and extracted in signalRService
           setLastOrderUpdate(notification);
           
-          // Show notification to user
-          if (Notification.permission === 'granted') {
+          // Show browser notification
+          if (Notification.permission === 'granted' && notification.status.toLowerCase() !== 'closed') {
             new Notification('Order Update', {
               body: `Your order is now ${notification.status}`,
               icon: '/logo.png'
@@ -41,34 +56,31 @@ export const SignalRProvider: React.FC<{ children: React.ReactNode }> = ({ child
           }
         });
 
-        // Listen for session expired
-        signalRService.onSessionExpired((notification: SessionExpiredNotification) => {
-          console.log(`[${new Date().toISOString()}] 🔔 Session expired:`, notification);
-          alert(`Your session has expired: ${notification.reason}. The page will reload.`);
-          window.location.reload();
-        });
+        setConnectionError(null);
+      } else {
+        setConnectionError('Failed to connect to real-time updates');
       }
-    };
+    } catch (error: any) {
+      console.error(`[${new Date().toISOString()}] ❌ SignalR connection failed:`, error);
+      setConnectionError(error.message || 'Failed to connect');
+      setIsConnected(false);
+    }
+  }, [jwt, sessionId]);
 
-    connect();
+  useEffect(() => {
+    setupConnection();
 
     return () => {
+      console.log(`[${new Date().toISOString()}] 🔌 Cleaning up customer SignalR connection`);
       signalRService.offOrderStatusChanged();
-      signalRService.offSessionExpired();
     };
-  }, [jwt]);
+  }, [jwt, sessionId, setupConnection]);
 
   return (
-    <SignalRContext.Provider value={{ isConnected, lastOrderUpdate }}>
+    <SignalRContext.Provider value={{ isConnected, lastOrderUpdate, connectionError }}>
       {children}
     </SignalRContext.Provider>
   );
 };
 
-export const useSignalR = () => {
-  const context = useContext(SignalRContext);
-  if (!context) {
-    throw new Error('useSignalR must be used within SignalRProvider');
-  }
-  return context;
-};
+export default SignalRProvider;

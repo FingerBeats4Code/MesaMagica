@@ -1,4 +1,6 @@
 // mesa-magica-pwa-app/src/components/MainContent.tsx
+// UPDATED VERSION - Fixed SignalR update handler and feedback triggering logic
+
 import React, { useState, useEffect, useCallback } from "react";
 import { useAppContext } from "@/context/AppContext";
 import { useSearchParams } from "react-router-dom";
@@ -77,10 +79,12 @@ const MainContent: React.FC<MainContentProps> = ({
     setError(null);
   }, [tableId]);
 
-  // ✅ SEPARATE: Basic order fetching (for SignalR updates)
+  // ✅ Basic order fetching (updates UI without triggering feedback)
   const fetchOrdersBasic = useCallback(async () => {
     try {
+      console.log(`[${new Date().toISOString()}] 📡 Fetching orders (basic)...`);
       const orders = await getMyOrders();
+      console.log(`[${new Date().toISOString()}] 📦 Received ${orders.length} orders`);
       setMyOrders(orders);
 
       // Update active order info for banner
@@ -96,12 +100,15 @@ const MainContent: React.FC<MainContentProps> = ({
         setActiveOrderInfo(null);
         console.log(`[${new Date().toISOString()}] ℹ️ No active orders`);
       }
+      
+      return orders;
     } catch (error) {
-      console.error("Failed to fetch orders:", error);
+      console.error(`[${new Date().toISOString()}] ❌ Failed to fetch orders:`, error);
+      throw error;
     }
   }, []);
 
-  // ✅ SEPARATE: Feedback trigger logic (independent from basic updates)
+  // ✅ Check for feedback opportunity (separate function)
   const checkAndShowFeedback = useCallback(async (orders: OrderResponse[]) => {
     try {
       // Check for closed orders
@@ -137,8 +144,8 @@ const MainContent: React.FC<MainContentProps> = ({
     }
   }, [lastClosedOrderId]);
 
-  // Combined fetch orders (for initial load and manual refreshes)
-  const fetchOrders = useCallback(async () => {
+  // ✅ Fetch orders WITH feedback check (for initial load and closed order detection)
+  const fetchOrdersWithFeedback = useCallback(async () => {
     try {
       const orders = await getMyOrders();
       setMyOrders(orders);
@@ -184,8 +191,8 @@ const MainContent: React.FC<MainContentProps> = ({
         setCategories(cats);
         setMenuItems(items);
 
-        // Fetch orders separately (includes feedback check)
-        await fetchOrders();
+        // Fetch orders with feedback check
+        await fetchOrdersWithFeedback();
 
         console.log(`[${new Date().toISOString()}] ✅ Data loaded - Categories: ${cats.length}, Items: ${items.length}`);
       } catch (error) {
@@ -197,37 +204,47 @@ const MainContent: React.FC<MainContentProps> = ({
     };
 
     fetchInitialData();
-  }, [jwt, sessionId, selectedCategory, tenantSlug, tableId, fetchOrders]);
+  }, [jwt, sessionId, selectedCategory, tenantSlug, tableId, fetchOrdersWithFeedback]);
 
-  // ✅ CRITICAL: SignalR order status updates (independent from feedback)
+  // ✅ FIXED: SignalR order status updates
   useEffect(() => {
-    if (lastOrderUpdate && lastOrderUpdate.status) {
-      console.log(`[${new Date().toISOString()}] 🔔 SignalR Order Update:`, {
-        orderId: lastOrderUpdate.orderId,
-        status: lastOrderUpdate.status,
-        previousStatus: lastOrderUpdate.previousStatus
-      });
-      
-      // ✅ IMPORTANT: Use basic fetch to update orders WITHOUT triggering feedback
-      // Feedback should only trigger on initial detection, not on every status change
-      fetchOrdersBasic();
-
-      // Show browser notification for status changes (except closed - feedback handles that)
-      if (Notification.permission === 'granted' && lastOrderUpdate.status.toLowerCase() !== 'closed') {
-        new Notification('Order Update', {
-          body: `Your order is now ${lastOrderUpdate.status}`,
-          icon: '/logo.png'
-        });
-      }
-
-      // ✅ ONLY check for feedback when order transitions to closed
-      if (lastOrderUpdate.status.toLowerCase() === 'closed') {
-        console.log(`[${new Date().toISOString()}] 🔒 Order closed via SignalR, checking feedback...`);
-        // Fetch orders with feedback check
-        fetchOrders();
-      }
+    if (!lastOrderUpdate || !lastOrderUpdate.status) {
+      console.log(`[${new Date().toISOString()}] ⏭️ Skipping SignalR update - no status`);
+      return;
     }
-  }, [lastOrderUpdate, fetchOrdersBasic, fetchOrders]);
+
+    console.log(`[${new Date().toISOString()}] 🔔 MainContent received SignalR Order Update:`, {
+      orderId: lastOrderUpdate.orderId,
+      status: lastOrderUpdate.status,
+      previousStatus: lastOrderUpdate.previousStatus,
+      currentOrdersCount: myOrders.length
+    });
+    
+    // Always update orders UI first
+    console.log(`[${new Date().toISOString()}] 🔄 Fetching orders after SignalR update...`);
+    fetchOrdersBasic().then(() => {
+      console.log(`[${new Date().toISOString()}] ✅ Orders refreshed after SignalR update`);
+    });
+
+    // Show browser notification for status changes (except closed)
+    const currentStatus = lastOrderUpdate.status.toLowerCase();
+    if (Notification.permission === 'granted' && currentStatus !== 'closed') {
+      new Notification('Order Update', {
+        body: `Your order is now ${lastOrderUpdate.status}`,
+        icon: '/logo.png'
+      });
+    }
+
+    // ✅ Only check for feedback when order transitions to closed
+    if (currentStatus === 'closed') {
+      console.log(`[${new Date().toISOString()}] 🔒 Order closed via SignalR, checking feedback...`);
+      
+      // Small delay to ensure backend has fully updated
+      setTimeout(() => {
+        fetchOrdersWithFeedback();
+      }, 500);
+    }
+  }, [lastOrderUpdate]);
 
   // Handle feedback submission
   const handleFeedbackSubmitted = () => {
@@ -303,7 +320,7 @@ const MainContent: React.FC<MainContentProps> = ({
 
       onCloseCart();
       await onCartUpdate();
-      await fetchOrdersBasic(); // Use basic fetch since we don't need feedback check here
+      await fetchOrdersBasic(); // Use basic fetch - no need for feedback check
 
       console.log(`[${new Date().toISOString()}] ✅ Cart and orders refreshed`);
     } catch (error: any) {
@@ -335,7 +352,7 @@ const MainContent: React.FC<MainContentProps> = ({
   return (
     <>
       <main className="mx-auto px-8 relative z-20 max-w-7xl">
-        {/* Active Order Banner - Updates in real-time via SignalR */}
+        {/* Active Order Banner */}
         {activeOrderInfo && (
           <ActiveOrderBanner
             orderId={activeOrderInfo.orderId}
@@ -369,7 +386,7 @@ const MainContent: React.FC<MainContentProps> = ({
         </div>
       </main>
 
-      {/* Cart Modal */}
+      {/* Modals */}
       <CartModal
         isOpen={showCart}
         cart={cart}
@@ -378,7 +395,6 @@ const MainContent: React.FC<MainContentProps> = ({
         onPlaceOrder={handlePlaceOrder}
       />
 
-      {/* Orders Modal */}
       <OrdersModal
         isOpen={showOrders}
         orders={myOrders}
@@ -386,7 +402,7 @@ const MainContent: React.FC<MainContentProps> = ({
         onClose={onCloseOrders}
       />
 
-      {/* Feedback Modal - Only appears when order is first closed */}
+      {/* Feedback Modal - Only shown when order is first closed */}
       {showFeedback && feedbackOrderId && (
         <FeedbackModal
           isOpen={showFeedback}
