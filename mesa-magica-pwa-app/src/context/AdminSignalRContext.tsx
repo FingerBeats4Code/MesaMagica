@@ -1,8 +1,10 @@
+// ========================================
+// FILE 2: AdminSignalRContext.tsx (Admin)
+// ========================================
 // mesa-magica-pwa-app/src/context/AdminSignalRContext.tsx
-// ✅ UPDATED: Added validation to ensure notification has required fields
-
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { signalRService, OrderStatusNotification, NewOrderNotification } from '@/services/signalr.service';
+import SignalRHealthIndicator from '@/components/SignalRHealthIndicator';
 
 interface AdminSignalRContextType {
   isConnected: boolean;
@@ -26,20 +28,16 @@ export const AdminSignalRProvider: React.FC<{ children: React.ReactNode }> = ({ 
     }
 
     const connect = async () => {
-      const connected = await signalRService.connect(adminToken, false); // false = admin
+      const connected = await signalRService.connect(adminToken, false);
       setIsConnected(connected);
 
       if (connected) {
         console.log(`[${new Date().toISOString()}] 🔌 Admin SignalR connected`);
 
-        // Admin listens to order status changes (for orders they update)
         signalRService.onOrderStatusChanged((notification) => {
           console.log(`[${new Date().toISOString()}] 🔔 Admin: Order status updated:`, notification);
-          
-          // Notification is already validated in signalRService
           setLastOrderUpdate(notification);
           
-          // Show desktop notification
           if (Notification.permission === 'granted') {
             new Notification('Order Status Updated', {
               body: `Order #${notification.orderId.slice(0, 8)} is now ${notification.status}`,
@@ -48,31 +46,25 @@ export const AdminSignalRProvider: React.FC<{ children: React.ReactNode }> = ({ 
           }
         });
 
-        // Admin listens to new orders from customers
         signalRService.onNewOrderReceived((notification) => {
           console.log(`[${new Date().toISOString()}] 🔔 Admin: New order received:`, notification);
           
-          // ✅ VALIDATE: Ensure notification has required fields
           if (notification && notification.orderId && notification.tableNumber) {
             setLastNewOrder({
               ...notification,
-              timestamp: notification.timestamp || new Date().toISOString() // Ensure timestamp exists
+              timestamp: notification.timestamp || new Date().toISOString()
             });
             
-            // Show desktop notification with sound
             if (Notification.permission === 'granted') {
               new Notification('New Order Received! 🔔', {
-                body: `Table ${notification.tableNumber}: ${notification.itemCount} items - $${notification.totalAmount.toFixed(2)}`,
+                body: `${notification.tableNumber}: ${notification.itemCount} items - ${notification.totalAmount.toFixed(2)}`,
                 icon: '/logo.png',
-                requireInteraction: true // Keeps notification visible
+                requireInteraction: true
               });
             }
             
-            // Play notification sound
             const audio = new Audio('/notification-sound.mp3');
             audio.play().catch(e => console.log('Could not play sound:', e));
-          } else {
-            console.warn(`[${new Date().toISOString()}] ⚠️ Received incomplete new order notification:`, notification);
           }
         });
       }
@@ -89,6 +81,7 @@ export const AdminSignalRProvider: React.FC<{ children: React.ReactNode }> = ({ 
   return (
     <AdminSignalRContext.Provider value={{ isConnected, lastOrderUpdate, lastNewOrder }}>
       {children}
+      <SignalRHealthIndicator isAdmin={true} />
     </AdminSignalRContext.Provider>
   );
 };
