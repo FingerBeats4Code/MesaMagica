@@ -1,8 +1,8 @@
 // mesa-magica-pwa-app/src/pages/admin/Orders.tsx
-// ✅ UPDATED: Added useAdminSignalR hook for real-time order updates
-import React, { useState, useEffect } from "react";
+// ✅ FIXED: Proper SignalR real-time updates for admin side
+import React, { useState, useEffect, useCallback } from "react";
 import { getActiveOrders, updateOrderStatus, editOrder, ActiveOrderResponse } from "@/api/api";
-import { useAdminSignalR } from "@/context/AdminSignalRContext"; // ✅ NEW IMPORT
+import { useAdminSignalR } from "@/context/AdminSignalRContext";
 
 interface EditingOrder {
   orderId: string;
@@ -17,11 +17,13 @@ const Orders: React.FC = () => {
   const [showPaymentSlip, setShowPaymentSlip] = useState<string | null>(null);
   const [showClosedOrders, setShowClosedOrders] = useState(true);
   
-  // ✅ NEW: Get SignalR connection status and updates
+  // ✅ Get SignalR connection status and updates
   const { isConnected, lastOrderUpdate, lastNewOrder } = useAdminSignalR();
 
-  const fetchOrders = async () => {
+  // ✅ FIXED: Use useCallback with proper dependencies
+  const fetchOrders = useCallback(async () => {
     try {
+      console.log(`[${new Date().toISOString()}] 📋 Fetching orders...`);
       setLoading(true);
       const response = await getActiveOrders();
       
@@ -34,13 +36,16 @@ const Orders: React.FC = () => {
         return orderDate.getTime() === today.getTime();
       });
       
+      console.log(`[${new Date().toISOString()}] ✅ Loaded ${todaysOrders.length} orders`);
       setOrders(todaysOrders);
+      setError("");
     } catch (err: any) {
+      console.error(`[${new Date().toISOString()}] ❌ Error fetching orders:`, err);
       setError(err.message || "Failed to fetch orders");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   // Initial fetch
   useEffect(() => {
@@ -48,34 +53,79 @@ const Orders: React.FC = () => {
     // Backup polling reduced to 60s since we have SignalR
     const interval = setInterval(fetchOrders, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchOrders]);
 
-  // ✅ NEW: Auto-refresh when new order received via SignalR
+  // ✅ FIXED: Auto-refresh when new order received via SignalR with delay
   useEffect(() => {
-    if (lastNewOrder) {
-      console.log(`[${new Date().toISOString()}] 🔄 New order received via SignalR - refreshing orders`);
-      fetchOrders();
-    }
-  }, [lastNewOrder]);
+    if (!lastNewOrder) return;
 
-  // ✅ NEW: Auto-refresh when order status changed via SignalR
-  useEffect(() => {
-    if (lastOrderUpdate) {
-      console.log(`[${new Date().toISOString()}] 🔄 Order status changed via SignalR - refreshing orders`);
+    console.log(`[${new Date().toISOString()}] 🔔 NEW ORDER via SignalR:`, {
+      orderId: lastNewOrder.orderId,
+      tableNumber: lastNewOrder.tableNumber,
+      itemCount: lastNewOrder.itemCount,
+      totalAmount: lastNewOrder.totalAmount,
+      timestamp: new Date().toISOString()
+    });
+
+    // ✅ Add delay to ensure backend has committed
+    const timer = setTimeout(() => {
+      console.log(`[${new Date().toISOString()}] 🔄 Refreshing orders after new order notification`);
       fetchOrders();
+    }, 500); // 500ms delay
+
+    return () => clearTimeout(timer);
+  }, [lastNewOrder, fetchOrders]);
+
+  // ✅ FIXED: Auto-refresh when order status changed via SignalR with delay
+  useEffect(() => {
+    if (!lastOrderUpdate) return;
+
+    console.log(`[${new Date().toISOString()}] 🔔 ORDER STATUS CHANGE via SignalR:`, {
+      orderId: lastOrderUpdate.orderId,
+      status: lastOrderUpdate.status,
+      previousStatus: lastOrderUpdate.previousStatus,
+      tableNumber: lastOrderUpdate.tableNumber,
+      timestamp: new Date().toISOString()
+    });
+
+    // ✅ Add delay to ensure backend has committed
+    const timer = setTimeout(() => {
+      console.log(`[${new Date().toISOString()}] 🔄 Refreshing orders after status change`);
+      fetchOrders();
+    }, 500); // 500ms delay
+
+    return () => clearTimeout(timer);
+  }, [lastOrderUpdate, fetchOrders]);
+
+  // ✅ NEW: Debug connection status
+  useEffect(() => {
+    console.log(`[${new Date().toISOString()}] Admin SignalR Connection Status: ${isConnected ? 'CONNECTED ✅' : 'DISCONNECTED ❌'}`);
+    
+    if (!isConnected) {
+      setError("Real-time updates disconnected. Reconnecting...");
+    } else {
+      // Clear error if it was connection-related
+      if (error.includes("Real-time")) {
+        setError("");
+      }
     }
-  }, [lastOrderUpdate]);
+  }, [isConnected]);
 
   const handleStatusUpdate = async (orderId: string, status: string) => {
     try {
+      console.log(`[${new Date().toISOString()}] 📝 Updating order ${orderId} to status: ${status}`);
       await updateOrderStatus({ orderId, status });
       
       if (status.toLowerCase() === "closed") {
         console.log(`[${new Date().toISOString()}] Order ${orderId} closed - table session should be freed`);
       }
       
-      await fetchOrders();
+      // ✅ Wait a bit before refreshing to ensure backend has committed
+      setTimeout(() => {
+        fetchOrders();
+      }, 300);
     } catch (err: any) {
+      console.error(`[${new Date().toISOString()}] ❌ Error updating order:`, err);
       setError(err.message || "Failed to update order status");
     }
   };
@@ -99,7 +149,11 @@ const Orders: React.FC = () => {
         }))
       });
       setEditingOrder(null);
-      await fetchOrders();
+      
+      // ✅ Wait before refreshing
+      setTimeout(() => {
+        fetchOrders();
+      }, 300);
     } catch (err: any) {
       setError(err.message || "Failed to edit order");
     }
@@ -149,7 +203,7 @@ const Orders: React.FC = () => {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold">Manage Orders</h1>
-          {/* ✅ NEW: SignalR connection indicator */}
+          {/* ✅ SignalR connection indicator */}
           <div className="flex items-center gap-2 mt-2">
             <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></div>
             <span className="text-xs text-gray-600 dark:text-neutral-400">
@@ -169,9 +223,10 @@ const Orders: React.FC = () => {
           </label>
           <button
             onClick={fetchOrders}
-            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center gap-2"
+            disabled={loading}
+            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center gap-2 disabled:opacity-50"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
             Refresh
@@ -181,13 +236,29 @@ const Orders: React.FC = () => {
 
       {/* ✅ NEW: Show notification banner when new order arrives */}
       {lastNewOrder && (
-        <div className="mb-4 p-4 bg-green-50 dark:bg-green-900/20 border-2 border-green-500 rounded-xl">
+        <div className="mb-4 p-4 bg-green-50 dark:bg-green-900/20 border-2 border-green-500 rounded-xl animate-pulse">
           <div className="flex items-center gap-3">
-            <div className="text-3xl animate-bounce">🔔</div>
+            <div className="text-3xl">🔔</div>
             <div>
               <p className="font-bold text-green-900 dark:text-green-100">New Order Received!</p>
               <p className="text-sm text-green-700 dark:text-green-300">
                 {lastNewOrder.tableNumber} - {lastNewOrder.itemCount} items - ${lastNewOrder.totalAmount.toFixed(2)}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ✅ FIXED: Show status update banner with safe property access */}
+      {lastOrderUpdate && lastOrderUpdate.orderId && (
+        <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 border-2 border-blue-500 rounded-xl">
+          <div className="flex items-center gap-3">
+            <div className="text-2xl">📝</div>
+            <div>
+              <p className="font-bold text-blue-900 dark:text-blue-100">Order Status Updated</p>
+              <p className="text-sm text-blue-700 dark:text-blue-300">
+                {lastOrderUpdate.tableNumber && `${lastOrderUpdate.tableNumber} - `}
+                Order #{lastOrderUpdate.orderId.slice(0, 8)} is now {lastOrderUpdate.status}
               </p>
             </div>
           </div>
@@ -222,7 +293,7 @@ const Orders: React.FC = () => {
         </div>
       </div>
 
-      {/* Rest of the component - Active Orders Section */}
+      {/* Active Orders Section */}
       <div className="mb-8">
         <h2 className="text-xl font-semibold mb-4">Active Orders ({activeOrders.length})</h2>
         <div className="space-y-4">
@@ -293,6 +364,39 @@ const Orders: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Closed Orders Section (Optional) */}
+      {showClosedOrders && closedOrders.length > 0 && (
+        <div>
+          <h2 className="text-xl font-semibold mb-4">Closed Orders Today ({closedOrders.length})</h2>
+          <div className="space-y-4">
+            {closedOrders.map(order => (
+              <div
+                key={order.orderId}
+                className="bg-gray-50 dark:bg-neutral-800 rounded-xl border border-zinc-300/70 dark:border-white/20 p-6 opacity-60"
+              >
+                <div className="flex items-start justify-between mb-4">
+                  <div>
+                    <h3 className="text-lg font-semibold">
+                      Table {order.tableId} - Order #{order.orderId.slice(0, 8)}
+                    </h3>
+                    <p className="text-xs text-gray-600 dark:text-neutral-400">
+                      {new Date(order.createdAt).toLocaleString()}
+                    </p>
+                  </div>
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(order.status)}`}>
+                    {order.status}
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span>{order.items.length} items</span>
+                  <span className="font-bold">${order.totalAmount.toFixed(2)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
